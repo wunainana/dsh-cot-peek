@@ -20,7 +20,8 @@
     "icon.svg",
     "market.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/*.png"
   ],
   "keywords": [
     "dsh",
