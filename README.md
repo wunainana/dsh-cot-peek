@@ -1,0 +1,108 @@
+# dsh-cot-peek · 思考小窗
+
+在 DSH Web 界面里悬浮一个置顶小窗，实时显示当前会话的思考过程（reasoning），
+可收起，并可自动机翻成中文。
+
+**位置**：`shell.overlay` 顶层浮层，`position: fixed`，**可拖动**（按住标题栏）+
+**可调大小**（拖右下角），位置和尺寸存在 localStorage，并且始终限制在视口内
+（最小 320×140，最大 960×800）。收起后变成一条小胶囊。
+数据来自 `conversation.input.dock` 里的隐藏数据座（那里才有当前 Session 的 Chat 快照）。
+
+## 它做什么
+
+- 从 Chat 快照里直接读当前正在流式输出的 reasoning（不额外请求、不跑二次流）
+- **手动翻译**：标题栏一个「翻译」按钮，点一下才把当前思考整段翻成中文；不点就一个请求都不发
+- 英文思考 → 中文译文：代码块、行内代码、URL、文件名、术语先打成占位符，翻完原样还原
+- 相同片段缓存，多句串行翻译（不冲垮免费翻译接口）
+- 翻译失败自动退回原文，标题栏给出状态
+- 思考还在继续时按钮会变成「再译」，提醒您译文已经落后一截
+- 可收起：收起后只留一行标题 + 最新一句摘要；状态记在 localStorage
+- 可切换「译文 / 原文」
+- 翻译服务不可用时，鼠标悬停标题栏的「翻译未启用」会显示具体卡在哪一步
+  （服务未挂载 / 插件未启用 / 设置不可用 / 服务报错）
+
+## 为什么是手动按钮
+
+自动翻译会在思考流式输出时不停地切句、发请求，一是烧额度，二是免费接口容易被限流，
+三是翻了半句话体验反而更差。手动模式：**您想看的才翻**，一次翻整段，缓存复用。
+
+## 翻译管线（为什么快、为什么不会硬翻术语）
+
+1. **省**
+   - 手动触发：不点按钮不发请求；一次翻整段，未写完的尾巴也一起送（您点了就是想看）
+   - 缓存：同一句只翻一次（思考里重复很多）
+   - 串行 + 合句：短句合并到 ≥28 字符再发，减少请求数
+2. **准**
+   - 送整句、不送碎片；合句后语义完整
+3. **不硬翻专业术语**
+   - 发出前先用**占位符**把代码块、行内代码、URL、文件名、术语表里的词
+     替换成 `⟦1⟧` 这类标记，翻译引擎看不到它们，翻完再原样还原
+   - 术语表在 `client.js` 的 `KEEP_TERMS`，默认保留英文：
+     DSH / MCP / LLM / API / SDK / JSON / Session / Token / Prompt / Context /
+     Slot / Plugin / Bundle / Agent / Tool / Stream / Markdown …
+
+   想加词：往 `KEEP_TERMS` 里加一条即可。
+
+## 依赖
+
+中文译文依赖官方实验包：
+
+```
+@deepseek-ai/dsh-experimental-cot-translation-bundle
+```
+
+它提供 Host 侧的 `translator` 服务和 Client 侧的 `ctx.remote.cotTranslation`。
+不装也能用，只是小窗显示英文原文，标题栏标「翻译未启用」（悬停或点按钮能看到具体原因）。
+
+本插件的 `package.json` 里 `dsh.client.inject` **必须**声明 `@deepseek-ai/dsh-api-remotes`
+——那是提供 `remote` 服务的客户端包；不声明的话 `ctx.get('remote')` 永远是 `undefined`，
+表现就是「翻译未启用」。另外客户端 `inject` 数组里要有 `remote`（与官方翻译插件一致），
+读取嵌套命名空间用 `ctx.get('remote.cotTranslation')`：cordis 的 `ctx.get(name)` 是
+**绕过 inject 要求**直接读服务仓的，这是最稳的一条路；`ctx.inject(['remote.cotTranslation'])`
+作为第二条路兜底等待挂载。
+
+翻译服务默认 **Bing**（免费、免登录），可在
+「设置 → 插件 → 思考过程机器翻译」里换成 Google 或 DeepSeek（付费）。
+> 实测：Google 的 `translate.googleapis.com` 在国内网络下连不通，Bing 的
+> `edge.microsoft.com` 是可用的，建议保持默认。
+
+## 安装
+
+本地目录链接（开发时）：
+
+```
+dsh plugin --profile desktop add link:<本目录的绝对路径>
+```
+
+从 npm 安装（发布后）：
+
+```
+dsh plugin --profile desktop add dsh-cot-peek
+```
+
+安装后重启 DSH 生效。
+
+## 发布
+
+- 仓库根目录带 `market.json`（插件市场索引格式 1）。推到 GitHub 后，把它的
+  raw / GitHub Pages URL 加进 DSH「设置 → 插件市场」的索引源，就能在「发现」里看到
+- npm：`npm publish`（包名 `dsh-cot-peek` 未被占用）
+
+## 文件
+
+```
+package.json       bundle 清单（dsh.bundle.patch + dsh.client）
+cordis.patch.yml   把 cot-peek 这一行插进 profile
+index.js           Host 半身：空实现（功能全在浏览器）
+client.js          全部逻辑：取 reasoning、分句、术语保护、手动翻译、UI
+locale/zh.json     插件管理页里显示的中文标题/描述
+locale/en.json     英文标题/描述
+icon.svg           原创图标
+```
+
+## 已知限制
+
+- 只显示「最后一段 assistant-step」的 reasoning；多 step 连续思考时会以最新 step 为准
+- 手动翻译：翻完之后思考继续长，译文会落后，按钮变成「再译」提醒您
+- 翻译走匿名接口，可能被限流或拒绝；失败时自动显示原文
+- 改完 `client.js` 需要刷新页面（Client 插件重载）
