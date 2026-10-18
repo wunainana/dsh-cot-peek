@@ -25,6 +25,9 @@ window.__ModuleLoader__.load({
       translate: 'Translate',
       retranslate: 'Translate again',
       translateHint: 'Translate the reasoning shown in this window',
+      auto: 'Auto',
+      autoOn: 'Auto translation on — checks for new text every few seconds',
+      autoOff: 'Auto translation off — click to translate new text automatically',
       off_remote: 'Translation bundle not mounted',
       off_contribution: 'Translation plugin not enabled',
       off_limits: 'Translation settings unavailable',
@@ -46,6 +49,9 @@ window.__ModuleLoader__.load({
       translate: '翻译',
       retranslate: '再译',
       translateHint: '把这扇窗里的思考翻成中文',
+      auto: '自动',
+      autoOn: '自动翻译已开启：每隔几秒检查有没有新思考',
+      autoOff: '自动翻译已关闭：点击开启，新内容会自动翻',
       off_remote: '翻译服务未挂载',
       off_contribution: '翻译插件未启用',
       off_limits: '翻译设置不可用',
@@ -680,6 +686,28 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // Auto mode: every AUTO_INTERVAL_MS, translate whatever finished reasoning
+    // arrived since the last pass. The tail of an unfinished sentence stays in
+    // the source language, so streaming never waits on the network.
+    const AUTO_KEY = 'dsh-cot-peek:auto';
+    const AUTO_INTERVAL_MS = 2500;
+
+    function readAuto() {
+      try {
+        return window.localStorage.getItem(AUTO_KEY) !== '0';
+      } catch (error) {
+        return true;
+      }
+    }
+
+    function writeAuto(value) {
+      try {
+        window.localStorage.setItem(AUTO_KEY, value ? '1' : '0');
+      } catch (error) {
+        /* storage may be unavailable */
+      }
+    }
+
     function oneLine(text) {
       const line = String(text).replace(/\s+/g, ' ').trim();
       return line.length > 72 ? line.slice(0, 72) + '…' : line;
@@ -702,12 +730,19 @@ window.__ModuleLoader__.load({
         failed: false,
       });
       const [translatedText, setTranslatedText] = React.useState('');
+      const [auto, setAuto] = React.useState(readAuto);
       const [notice, setNotice] = React.useState('');
       const [rect, setRect] = React.useState(readRect);
       const engine = React.useRef(null);
+      const autoState = React.useRef({ auto: true, available: false, sessionId: null, reasoning: '' });
+      const autoDone = React.useRef(0);
       const body = React.useRef(null);
       const drag = React.useRef(null);
       const resize = React.useRef(null);
+
+      // Keep the interval's view of the world fresh without restarting it on
+      // every streamed token.
+      autoState.current = { auto, available, sessionId, reasoning };
 
       // The translator bundle mounts asynchronously; the service keeps probing
       // in the background and pushes the moment it becomes usable.
@@ -720,9 +755,30 @@ window.__ModuleLoader__.load({
         return unsubscribe;
       }, [service]);
 
+      // Auto mode: translate only what finished since the previous pass.
+      React.useEffect(() => {
+        const tick = () => {
+          const current = autoState.current;
+          if (!current.auto || !current.available || current.sessionId === null) return;
+          const text = current.reasoning;
+          if (text.length <= autoDone.current) return;
+          autoDone.current = text.length;
+          if (engine.current === null) {
+            engine.current = new PeekTranslation(
+              (source, signal) => service.translate(source, current.sessionId, signal),
+              setTranslation,
+            );
+          }
+          engine.current.update(text);
+        };
+        const id = window.setInterval(tick, AUTO_INTERVAL_MS);
+        return () => window.clearInterval(id);
+      }, [service]);
+
       React.useEffect(() => {
         setTranslation({ output: '', tail: '', pending: false, failed: false });
         setTranslatedText('');
+        autoDone.current = 0;
       }, [sessionId]);
 
       React.useEffect(
@@ -853,9 +909,9 @@ window.__ModuleLoader__.load({
         : original;
       const summary = oneLine(summarySource);
 
-      // Streaming continues after a manual translate, so tell the user that the
-      // translation is one step behind instead of silently showing stale text.
-      const stale = translatedText !== '' && original.length > translatedText.length;
+      // In manual mode, streaming keeps growing after a translate, so tell the
+      // user the translation is one step behind. Auto mode catches up by itself.
+      const stale = !auto && translatedText !== '' && original.length > translatedText.length;
 
       const describeReason = () => {
         const code = typeof service.reason === 'function' ? service.reason() : 'remote';
@@ -909,8 +965,17 @@ window.__ModuleLoader__.load({
           );
         }
         setTranslatedText(text);
+        autoDone.current = text.length;
         setView('translated');
         engine.current.translateAll(text);
+      };
+
+      const toggleAuto = () => {
+        const next = !auto;
+        setAuto(next);
+        writeAuto(next);
+        // Switching back on lets the next tick pick up everything new.
+        if (next) autoDone.current = 0;
       };
 
       const translateLabel = translation.pending
@@ -966,6 +1031,20 @@ window.__ModuleLoader__.load({
               )
             : null,
           h('span', { className: 'dsh-cot-peek__spacer' }),
+          available
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-cot-peek__toggle',
+                  'data-active': auto ? 'true' : undefined,
+                  'aria-pressed': auto ? 'true' : 'false',
+                  title: auto ? t('autoOn') : t('autoOff'),
+                  onClick: toggleAuto,
+                },
+                t('auto'),
+              )
+            : null,
           original.trim() !== ''
             ? h(
                 'button',
@@ -1052,6 +1131,7 @@ window.__ModuleLoader__.load({
       '.dsh-cot-peek__toggle:hover,.dsh-cot-peek__toggle:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12));color:var(--dsw-alias-label-primary)}',
       '.dsh-cot-peek__toggle:focus-visible{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
       '.dsh-cot-peek__toggle[data-primary="true"]{color:var(--dsw-alias-brand-primary)}',
+      '.dsh-cot-peek__toggle[data-active="true"]{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}',
       '.dsh-cot-peek__toggle[disabled]{opacity:.55;cursor:default}',
       '.dsh-cot-peek__body{flex:1;min-height:0;overflow-y:auto;padding:0 12px 12px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:1.6}',
       '.dsh-cot-peek__body[data-view="original"]{opacity:.82}',
