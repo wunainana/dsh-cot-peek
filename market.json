@@ -49,11 +49,9 @@
       "versions": [
         {
           "version": "0.2.1",
-          "publishTimestamp": 1792296629,
+          "publishTimestamp": 1792297278,
           "source": {
-            "type": "git",
-            "url": "https://github.com/wunainana/dsh-cot-peek",
-            "commit": "28b07267026d076927f760fcc4fcde1cd41f749c"
+            "type": "npm"
           },
           "engines": {
             "dsh": ">=0.2.0"

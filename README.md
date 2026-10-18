@@ -68,33 +68,52 @@
 
 ## 安装
 
+从 npm 安装（推荐）：
+
+```
+dsh plugin --profile desktop add dsh-cot-peek
+```
+
+或者在 DSH「设置 → 插件市场」里加入下面的索引源，在「发现」页一键装：
+
+```
+https://gh-proxy.com/https://raw.githubusercontent.com/wunainana/dsh-cot-peek/main/market.json
+```
+
 本地目录链接（开发时）：
 
 ```
 dsh plugin --profile desktop add link:<本目录的绝对路径>
 ```
 
-从 npm 安装（发布后）：
+从 GitHub 装（SSH，适合 HTTPS 到 GitHub 不通的网络）：
 
 ```
-dsh plugin --profile desktop add dsh-cot-peek
+dsh plugin --profile desktop add "git+ssh://git@github.com:wunainana/dsh-cot-peek.git"
 ```
 
 安装后重启 DSH 生效。
 
-从 GitHub 装（SSH，适合国内网络）：
-
-```
-dsh plugin --profile desktop add "git+ssh://git@github.com/wunainana/dsh-cot-peek.git"
-```
-
 ## 发布
 
-- 仓库根目录带 `market.json`（插件市场索引格式 1，已用 DSH 自带校验器验证）。
-  把下面任一地址加进 DSH「设置 → 插件市场 → 索引源」，就能在「发现」里看到：
-  - `https://raw.githubusercontent.com/wunainana/dsh-cot-peek/main/market.json`
-  - `https://cdn.jsdelivr.net/gh/wunainana/dsh-cot-peek@main/market.json`（raw 被墙时用）
-- npm：`npm publish`（包名 `dsh-cot-peek` 未被占用）
+- **npm**：已发布 `dsh-cot-peek@0.2.1` → <https://www.npmjs.com/package/dsh-cot-peek>
+- **插件市场索引**：仓库根目录的 `market.json`（格式 1，已通过 DSH 自带
+  `@deepseek-ai/dsh-plugin-market-index` 校验）。把它加进
+  「设置 → 插件市场 → 索引源」即可在「发现」页看到：
+
+  ```
+  https://gh-proxy.com/https://raw.githubusercontent.com/wunainana/dsh-cot-peek/main/market.json
+  ```
+
+  直连 GitHub 的网络也可以直接用 raw 地址：
+
+  ```
+  https://raw.githubusercontent.com/wunainana/dsh-cot-peek/main/market.json
+  ```
+
+- **发新版本**：改 `package.json` 的 version → `npm publish --access public` →
+  更新 `market.json` 里该版本的 `version` 与 `publishTimestamp` → 提交推送。
+  npm 账户开了 2FA，发布需要 `--otp=<6位码>` 或 Bypass 2FA 的 granular token。
 
 ## 文件
 
@@ -106,6 +125,7 @@ client.js          全部逻辑：取 reasoning、分句、术语保护、手动
 locale/zh.json     插件管理页里显示的中文标题/描述
 locale/en.json     英文标题/描述
 icon.svg           原创图标
+market.json        插件市场索引（format 1）
 ```
 
 ## 已知限制
