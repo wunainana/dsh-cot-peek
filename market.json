@@ -1,0 +1,65 @@
+{
+  "format": 1,
+  "title": {
+    "en": "wunainana's DSH plugins",
+    "zh": "wunainana 的 DSH 插件"
+  },
+  "description": {
+    "en": "Small, focused DeepSeek Harness bundles.",
+    "zh": "小巧、只做一件事的 DeepSeek Harness 组合包。"
+  },
+  "metadata": {
+    "categories": {
+      "ui": {
+        "title": {
+          "en": "Interface",
+          "zh": "界面"
+        }
+      }
+    }
+  },
+  "plugins": [
+    {
+      "name": "dsh-cot-peek",
+      "title": {
+        "en": "Thinking Peek",
+        "zh": "思考小窗"
+      },
+      "description": {
+        "en": "A floating window over the composer that shows the live reasoning trace, with a one-click translation to Chinese.",
+        "zh": "悬浮在输入框上方的小窗，实时显示思考过程，点一下按钮翻成中文。"
+      },
+      "icon": "./icon.svg",
+      "author": "wunainana",
+      "homepage": "https://github.com/wunainana/dsh-cot-peek#readme",
+      "repository": {
+        "url": "https://github.com/wunainana/dsh-cot-peek"
+      },
+      "metadata": {
+        "category": "ui",
+        "keywords": [
+          "reasoning",
+          "thinking",
+          "chain-of-thought",
+          "cot",
+          "translation",
+          "overlay"
+        ]
+      },
+      "versions": [
+        {
+          "version": "0.2.1",
+          "publishTimestamp": 1792296629,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/wunainana/dsh-cot-peek",
+            "commit": "28b07267026d076927f760fcc4fcde1cd41f749c"
+          },
+          "engines": {
+            "dsh": ">=0.2.0"
+          }
+        }
+      ]
+    }
+  ]
+}

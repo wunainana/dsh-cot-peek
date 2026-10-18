@@ -82,10 +82,18 @@ dsh plugin --profile desktop add dsh-cot-peek
 
 安装后重启 DSH 生效。
 
+从 GitHub 装（SSH，适合国内网络）：
+
+```
+dsh plugin --profile desktop add "git+ssh://git@github.com/wunainana/dsh-cot-peek.git"
+```
+
 ## 发布
 
-- 仓库根目录带 `market.json`（插件市场索引格式 1）。推到 GitHub 后，把它的
-  raw / GitHub Pages URL 加进 DSH「设置 → 插件市场」的索引源，就能在「发现」里看到
+- 仓库根目录带 `market.json`（插件市场索引格式 1，已用 DSH 自带校验器验证）。
+  把下面任一地址加进 DSH「设置 → 插件市场 → 索引源」，就能在「发现」里看到：
+  - `https://raw.githubusercontent.com/wunainana/dsh-cot-peek/main/market.json`
+  - `https://cdn.jsdelivr.net/gh/wunainana/dsh-cot-peek@main/market.json`（raw 被墙时用）
 - npm：`npm publish`（包名 `dsh-cot-peek` 未被占用）
 
 ## 文件
