@@ -822,6 +822,7 @@ window.__ModuleLoader__.load({
       const drag = React.useRef(null);
       const resize = React.useRef(null);
       const wasRunning = React.useRef(false);
+      const autoCollapsed = React.useRef(false);
       const boundsRef = React.useRef(bounds);
       boundsRef.current = bounds;
 
@@ -835,15 +836,22 @@ window.__ModuleLoader__.load({
         setRect(normalizeRect(desired.current, bounds));
       }, [bounds]);
 
-      // Collapse three seconds after a run finishes; a new run cancels it.
+      // Collapse three seconds after a run finishes; a new run cancels it and
+      // reopens the window if the collapse was automatic (manual stays shut).
       React.useEffect(() => {
         if (running) {
           wasRunning.current = true;
+          if (autoCollapsed.current) {
+            autoCollapsed.current = false;
+            setCollapsed(false);
+            writeCollapsed(false);
+          }
           return undefined;
         }
         if (!wasRunning.current) return undefined;
         wasRunning.current = false;
         const id = window.setTimeout(() => {
+          autoCollapsed.current = true;
           setCollapsed(true);
           writeCollapsed(true);
         }, AUTO_COLLAPSE_MS);
@@ -1090,6 +1098,7 @@ window.__ModuleLoader__.load({
 
       const toggleCollapsed = () => {
         const next = !collapsed;
+        autoCollapsed.current = false;
         setCollapsed(next);
         writeCollapsed(next);
       };
