@@ -714,7 +714,7 @@ window.__ModuleLoader__.load({
       const height = clamp(Number(rect.h) || 260, MIN_HEIGHT, maxHeight);
       const maxX = Math.max(area.left, area.right - width);
       const x = clamp(Number(rect.x) || area.left, area.left, maxX);
-      const y = clamp(Number(rect.y) || 92, 8, Math.max(8, viewportHeight - 48));
+      const y = clamp(Number(rect.y) || 92, 8, Math.max(8, viewportHeight - height - 8));
       return { x, y, w: width, h: height };
     }
 
@@ -770,6 +770,9 @@ window.__ModuleLoader__.load({
     const AUTO_COLLAPSE_MS = 3000;
     // Edge tab: only this sliver of the window stays on screen while docked.
     const ARROW_WIDTH = 26;
+    const ARROW_HEIGHT = 64;
+    // Gap between the window body and the arrow tab sitting outside it.
+    const ARROW_GAP = 6;
     const HIDE_DELAY_MS = 1500;
     const SNAP_DISTANCE = 64;
     const SLIDE_MS = 380;
@@ -1239,14 +1242,17 @@ window.__ModuleLoader__.load({
       const windowStyle = (() => {
         const viewportWidth = window.innerWidth;
         const hidden = collapsed && peek !== true;
+        // The arrow tab lives OUTSIDE the window, so hiding pushes the whole
+        // body past the viewport edge and leaves exactly the tab on screen.
+        const park = rect.w + ARROW_GAP;
         let left = rect.x;
         let offset = 0;
         if (docked === 'left') {
           left = 0;
-          if (hidden) offset = -(rect.w - ARROW_WIDTH);
+          if (hidden) offset = -park;
         } else if (docked === 'right') {
           left = Math.max(0, viewportWidth - rect.w);
-          if (hidden) offset = rect.w - ARROW_WIDTH;
+          if (hidden) offset = park;
         }
         return {
           left: left + 'px',
@@ -1259,6 +1265,13 @@ window.__ModuleLoader__.load({
         };
       })();
 
+      const arrowStyle =
+        docked === 'left'
+          ? { left: rect.w + ARROW_GAP + 'px' }
+          : docked === 'right'
+            ? { left: -(ARROW_WIDTH + ARROW_GAP) + 'px' }
+            : undefined;
+
       const edgeArrow =
         docked === null || !collapsed
           ? null
@@ -1268,6 +1281,7 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 className: 'dsh-cot-peek__edge',
                 'data-side': docked,
+                style: arrowStyle,
                 'aria-label': t('expand'),
                 title: summary !== '' ? summary : t('expand'),
                 onClick: (event) => {
@@ -1411,14 +1425,12 @@ window.__ModuleLoader__.load({
     // events because shell.overlay itself is click-through.
     // ------------------------------------------------------------------
     const CSS = [
-      '.dsh-cot-peek{position:fixed;z-index:900;box-sizing:border-box;display:flex;flex-direction:column;min-width:320px;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-alias-bg-overlay);box-shadow:var(--dsw-elevation-prominent,0 12px 36px rgba(0,0,0,.28));backdrop-filter:blur(12px);color:var(--dsw-alias-label-primary);overflow:hidden;pointer-events:auto;font-size:13px;line-height:1.55}',
+      '.dsh-cot-peek{position:fixed;z-index:900;box-sizing:border-box;display:flex;flex-direction:column;min-width:320px;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-alias-bg-overlay);box-shadow:var(--dsw-elevation-prominent,0 12px 36px rgba(0,0,0,.28));backdrop-filter:blur(12px);color:var(--dsw-alias-label-primary);overflow:visible;pointer-events:auto;font-size:13px;line-height:1.55}',
       '.dsh-cot-peek[data-collapsed="true"]{min-width:0}',
       '.dsh-cot-peek[data-running="true"]{border-color:var(--dsw-alias-brand-primary)}',
       '.dsh-cot-peek__head{display:flex;align-items:center;gap:8px;min-height:34px;padding:5px 10px;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}',
       '.dsh-cot-peek__head:active{cursor:grabbing}',
-      '.dsh-cot-peek__edge{position:absolute;top:50%;transform:translateY(-50%);width:26px;height:64px;display:flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-brand-primary);font-size:16px;line-height:1;cursor:pointer;padding:0;box-shadow:0 2px 10px rgba(0,0,0,.25);animation:dsh-cot-peek-breathe 2.6s ease-in-out infinite;pointer-events:auto}',
-      '.dsh-cot-peek__edge[data-side="left"]{right:0;border-top-right-radius:0;border-bottom-right-radius:0}',
-      '.dsh-cot-peek__edge[data-side="right"]{left:0;border-top-left-radius:0;border-bottom-left-radius:0}',
+      '.dsh-cot-peek__edge{position:absolute;top:50%;transform:translateY(-50%);width:26px;height:64px;display:flex;align-items:center;justify-content:center;border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-brand-primary);font-size:16px;line-height:1;cursor:pointer;padding:0;box-shadow:0 2px 10px rgba(0,0,0,.25);animation:dsh-cot-peek-breathe 2.6s ease-in-out infinite;pointer-events:auto;backdrop-filter:blur(8px)}',
       '.dsh-cot-peek__edge:hover,.dsh-cot-peek__edge:focus-visible{color:var(--dsw-alias-brand-primary);animation-play-state:paused;opacity:1}',
       '.dsh-cot-peek__edge:focus-visible{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:-2px}',
       '@keyframes dsh-cot-peek-breathe{0%,100%{opacity:.45}50%{opacity:1}}',

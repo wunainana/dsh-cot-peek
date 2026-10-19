@@ -1,6 +1,6 @@
 {
   "name": "dsh-cot-peek",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "思考小窗：可拖拽、贴边吸附、收起滑出只剩呼吸箭头，悬停滑入；思考增量自动翻译。",
   "type": "module",
   "main": "index.js",
