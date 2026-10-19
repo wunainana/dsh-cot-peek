@@ -1,7 +1,7 @@
 {
   "name": "dsh-cot-peek",
-  "version": "0.2.2",
-  "description": "思考小窗：悬浮置顶、可拖可拉、可收起，每几秒自动把 DSH 的思考过程增量翻成中文。",
+  "version": "0.2.3",
+  "description": "思考小窗：限制在对话列内悬浮、侧边栏一开自动缩、对话结束 3 秒自动收起，并把思考增量翻成中文。",
   "type": "module",
   "main": "index.js",
   "icon": "./icon.svg",

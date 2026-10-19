@@ -326,7 +326,7 @@ window.__ModuleLoader__.load({
     // the session snapshot) and the frame-wide floating window.
     // ------------------------------------------------------------------
     const bridge = (() => {
-      let value = { sessionId: null, text: '', running: false };
+      let value = { sessionId: null, text: '', running: false, bounds: null };
       const listeners = new Set();
       return {
         get: () => value,
@@ -338,7 +338,8 @@ window.__ModuleLoader__.load({
           if (
             next.sessionId === value.sessionId &&
             next.text === value.text &&
-            next.running === value.running
+            next.running === value.running &&
+            next.bounds === value.bounds
           ) {
             return;
           }
@@ -348,27 +349,87 @@ window.__ModuleLoader__.load({
       };
     })();
 
+    // The window lives in shell.overlay (frame-wide), so staying "inside the
+    // conversation" means measuring the composer column from the data seat and
+    // publishing those horizontal bounds to the floating window.
+    function measureColumnHost(node) {
+      let element = node;
+      for (let depth = 0; depth < 8 && element !== null; depth += 1) {
+        if (
+          typeof element.querySelector === 'function' &&
+          element.querySelector('textarea, [contenteditable="true"]') !== null
+        ) {
+          return element;
+        }
+        element = element.parentElement;
+      }
+      return null;
+    }
+
+    function columnBounds(host) {
+      if (host === null) return null;
+      const rect = host.getBoundingClientRect();
+      if (!(rect.width > 1)) return null;
+      return { left: Math.round(rect.left), right: Math.round(rect.right) };
+    }
+
     function PeekSource(props) {
       const { sessionId, useChat } = props;
       const text = useChat(selectReasoningText);
       const running = useChat(selectReasoningRunning);
+      const seat = React.useRef(null);
+      const [bounds, setBounds] = React.useState(null);
+
+      // Track the conversation column: a sidebar opening shrinks it, and the
+      // floating window has to follow.
+      React.useLayoutEffect(() => {
+        const node = seat.current;
+        if (node === null) return undefined;
+        const host = measureColumnHost(node);
+        let frame = null;
+        const update = () => {
+          frame = null;
+          setBounds(columnBounds(host));
+        };
+        const schedule = () => {
+          if (frame !== null) return;
+          frame = window.requestAnimationFrame(update);
+        };
+        update();
+        let observer = null;
+        if (host !== null && typeof ResizeObserver === 'function') {
+          observer = new ResizeObserver(schedule);
+          observer.observe(host);
+        }
+        window.addEventListener('resize', schedule);
+        return () => {
+          if (frame !== null) window.cancelAnimationFrame(frame);
+          if (observer !== null) observer.disconnect();
+          window.removeEventListener('resize', schedule);
+        };
+      }, []);
 
       React.useEffect(() => {
         bridge.set({
           sessionId: typeof sessionId === 'string' ? sessionId : null,
           text: typeof text === 'string' ? text : '',
           running: running === true,
+          bounds,
         });
-      }, [sessionId, text, running]);
+      }, [sessionId, text, running, bounds]);
 
       React.useEffect(
         () => () => {
-          bridge.set({ sessionId: null, text: '', running: false });
+          bridge.set({ sessionId: null, text: '', running: false, bounds: null });
         },
         [],
       );
 
-      return null;
+      return h('span', {
+        ref: seat,
+        'aria-hidden': 'true',
+        style: { display: 'none' },
+      });
     }
 
     // ------------------------------------------------------------------
@@ -632,33 +693,47 @@ window.__ModuleLoader__.load({
       return Math.max(low, Math.min(value, high));
     }
 
-    function normalizeRect(rect) {
+    // Horizontal area the window is allowed to occupy: the conversation column
+    // when it has been measured, the whole viewport otherwise.
+    function horizontalArea(bounds) {
       const viewportWidth = window.innerWidth;
+      if (bounds === null || bounds === undefined) {
+        return { left: 8, right: viewportWidth - 8 };
+      }
+      const left = clamp(Math.round(bounds.left) + 8, 8, Math.max(8, viewportWidth - MIN_WIDTH - 8));
+      const right = clamp(Math.round(bounds.right) - 8, left + MIN_WIDTH, viewportWidth - 8);
+      return { left, right };
+    }
+
+    function normalizeRect(rect, bounds) {
       const viewportHeight = window.innerHeight;
-      const maxWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, viewportWidth - 16));
+      const area = horizontalArea(bounds);
+      const maxWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, area.right - area.left));
       const maxHeight = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, viewportHeight - 80));
       const width = clamp(Number(rect.w) || 680, MIN_WIDTH, maxWidth);
       const height = clamp(Number(rect.h) || 260, MIN_HEIGHT, maxHeight);
-      const x = clamp(Number(rect.x) || 0, 8, Math.max(8, viewportWidth - width - 8));
+      const maxX = Math.max(area.left, area.right - width);
+      const x = clamp(Number(rect.x) || area.left, area.left, maxX);
       const y = clamp(Number(rect.y) || 92, 8, Math.max(8, viewportHeight - 48));
       return { x, y, w: width, h: height };
     }
 
-    function defaultRect() {
-      const viewportWidth = window.innerWidth;
-      const width = clamp(Math.min(680, viewportWidth - 48), MIN_WIDTH, MAX_WIDTH);
-      return normalizeRect({ x: Math.round((viewportWidth - width) / 2), y: 92, w: width, h: 260 });
+    function defaultRect(bounds) {
+      const area = horizontalArea(bounds);
+      const width = clamp(Math.min(680, area.right - area.left), MIN_WIDTH, MAX_WIDTH);
+      const x = Math.round(area.left + Math.max(0, (area.right - area.left - width) / 2));
+      return normalizeRect({ x, y: 92, w: width, h: 260 }, bounds);
     }
 
-    function readRect() {
+    function readRect(bounds) {
       try {
         const raw = window.localStorage.getItem(RECT_KEY);
-        if (raw === null) return defaultRect();
+        if (raw === null) return defaultRect(bounds);
         const parsed = JSON.parse(raw);
-        if (parsed === null || typeof parsed !== 'object') return defaultRect();
-        return normalizeRect(parsed);
+        if (parsed === null || typeof parsed !== 'object') return defaultRect(bounds);
+        return normalizeRect(parsed, bounds);
       } catch (error) {
-        return defaultRect();
+        return defaultRect(bounds);
       }
     }
 
@@ -691,6 +766,8 @@ window.__ModuleLoader__.load({
     // the source language, so streaming never waits on the network.
     const AUTO_KEY = 'dsh-cot-peek:auto';
     const AUTO_INTERVAL_MS = 2500;
+    // Collapse the window this long after a run finishes (a new run cancels it).
+    const AUTO_COLLAPSE_MS = 3000;
 
     function readAuto() {
       try {
@@ -719,6 +796,7 @@ window.__ModuleLoader__.load({
       const sessionId = state.sessionId;
       const reasoning = state.text;
       const running = state.running === true;
+      const bounds = state.bounds === undefined ? null : state.bounds;
 
       const [collapsed, setCollapsed] = React.useState(readCollapsed);
       const [view, setView] = React.useState('translated');
@@ -732,17 +810,45 @@ window.__ModuleLoader__.load({
       const [translatedText, setTranslatedText] = React.useState('');
       const [auto, setAuto] = React.useState(readAuto);
       const [notice, setNotice] = React.useState('');
-      const [rect, setRect] = React.useState(readRect);
+      // `desired` keeps what the user actually asked for, so a sidebar closing
+      // can widen the window back instead of leaving it permanently shrunk.
+      const desired = React.useRef(null);
+      if (desired.current === null) desired.current = readRect(null);
+      const [rect, setRect] = React.useState(() => normalizeRect(desired.current, null));
       const engine = React.useRef(null);
       const autoState = React.useRef({ auto: true, available: false, sessionId: null, reasoning: '' });
       const autoDone = React.useRef(0);
       const body = React.useRef(null);
       const drag = React.useRef(null);
       const resize = React.useRef(null);
+      const wasRunning = React.useRef(false);
+      const boundsRef = React.useRef(bounds);
+      boundsRef.current = bounds;
 
       // Keep the interval's view of the world fresh without restarting it on
       // every streamed token.
       autoState.current = { auto, available, sessionId, reasoning };
+
+      // Follow the conversation column: clamp the visible rect whenever the
+      // measured bounds change (window resize, sidebar opening/closing).
+      React.useEffect(() => {
+        setRect(normalizeRect(desired.current, bounds));
+      }, [bounds]);
+
+      // Collapse three seconds after a run finishes; a new run cancels it.
+      React.useEffect(() => {
+        if (running) {
+          wasRunning.current = true;
+          return undefined;
+        }
+        if (!wasRunning.current) return undefined;
+        wasRunning.current = false;
+        const id = window.setTimeout(() => {
+          setCollapsed(true);
+          writeCollapsed(true);
+        }, AUTO_COLLAPSE_MS);
+        return () => window.clearTimeout(id);
+      }, [running]);
 
       // The translator bundle mounts asynchronously; the service keeps probing
       // in the background and pushes the moment it becomes usable.
@@ -797,7 +903,7 @@ window.__ModuleLoader__.load({
       }, [translation.output, translation.tail, reasoning, collapsed]);
 
       React.useEffect(() => {
-        const handle = () => setRect((previous) => normalizeRect(previous));
+        const handle = () => setRect(normalizeRect(desired.current, boundsRef.current));
         window.addEventListener('resize', handle);
         return () => window.removeEventListener('resize', handle);
       }, []);
@@ -810,8 +916,8 @@ window.__ModuleLoader__.load({
           pointerId: event.pointerId,
           startX: event.clientX,
           startY: event.clientY,
-          baseX: rect.x,
-          baseY: rect.y,
+          baseX: desired.current.x,
+          baseY: desired.current.y,
         };
         if (typeof event.currentTarget.setPointerCapture === 'function') {
           event.currentTarget.setPointerCapture(event.pointerId);
@@ -821,19 +927,24 @@ window.__ModuleLoader__.load({
       const moveDrag = (event) => {
         const session = drag.current;
         if (session === null || session.pointerId !== event.pointerId) return;
-        setRect((previous) => ({
-          ...previous,
-          x: clamp(
-            session.baseX + event.clientX - session.startX,
-            8,
-            Math.max(8, window.innerWidth - previous.w - 8),
-          ),
-          y: clamp(
-            session.baseY + event.clientY - session.startY,
-            8,
-            Math.max(8, window.innerHeight - 48),
-          ),
-        }));
+        const area = horizontalArea(boundsRef.current);
+        const width = clamp(
+          Number(desired.current.w) || 680,
+          MIN_WIDTH,
+          Math.max(MIN_WIDTH, area.right - area.left),
+        );
+        const x = clamp(
+          session.baseX + event.clientX - session.startX,
+          area.left,
+          Math.max(area.left, area.right - width),
+        );
+        const y = clamp(
+          session.baseY + event.clientY - session.startY,
+          8,
+          Math.max(8, window.innerHeight - 48),
+        );
+        desired.current = { ...desired.current, x, y };
+        setRect(normalizeRect(desired.current, boundsRef.current));
       };
 
       const endDrag = (event) => {
@@ -842,10 +953,7 @@ window.__ModuleLoader__.load({
         if (typeof event.currentTarget.releasePointerCapture === 'function') {
           event.currentTarget.releasePointerCapture(event.pointerId);
         }
-        setRect((previous) => {
-          saveRect(previous);
-          return previous;
-        });
+        saveRect(desired.current);
       };
 
       const beginResize = (event) => {
@@ -856,8 +964,8 @@ window.__ModuleLoader__.load({
           pointerId: event.pointerId,
           startX: event.clientX,
           startY: event.clientY,
-          baseW: rect.w,
-          baseH: rect.h,
+          baseW: desired.current.w,
+          baseH: desired.current.h,
         };
         if (typeof event.currentTarget.setPointerCapture === 'function') {
           event.currentTarget.setPointerCapture(event.pointerId);
@@ -867,15 +975,13 @@ window.__ModuleLoader__.load({
       const moveResize = (event) => {
         const session = resize.current;
         if (session === null || session.pointerId !== event.pointerId) return;
-        setRect((previous) => {
-          const maxWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, window.innerWidth - 16));
-          const maxHeight = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, window.innerHeight - 80));
-          return {
-            ...previous,
-            w: clamp(session.baseW + event.clientX - session.startX, MIN_WIDTH, maxWidth),
-            h: clamp(session.baseH + event.clientY - session.startY, MIN_HEIGHT, maxHeight),
-          };
-        });
+        const area = horizontalArea(boundsRef.current);
+        const maxWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, area.right - area.left));
+        const maxHeight = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, window.innerHeight - 80));
+        const w = clamp(session.baseW + event.clientX - session.startX, MIN_WIDTH, maxWidth);
+        const h = clamp(session.baseH + event.clientY - session.startY, MIN_HEIGHT, maxHeight);
+        desired.current = { ...desired.current, w, h };
+        setRect(normalizeRect(desired.current, boundsRef.current));
       };
 
       const endResize = (event) => {
@@ -884,10 +990,7 @@ window.__ModuleLoader__.load({
         if (typeof event.currentTarget.releasePointerCapture === 'function') {
           event.currentTarget.releasePointerCapture(event.pointerId);
         }
-        setRect((previous) => {
-          saveRect(previous);
-          return previous;
-        });
+        saveRect(desired.current);
       };
 
       if (sessionId === null) return null;
