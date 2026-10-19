@@ -1,7 +1,7 @@
 {
   "name": "dsh-cot-peek",
-  "version": "0.2.4",
-  "description": "思考小窗：对话列内悬浮、侧边栏自适应缩放、切换对话自动收回、结束 3 秒收成抽屉，并把思考增量翻成中文。",
+  "version": "0.2.5",
+  "description": "思考小窗：可拖拽、贴边吸附、收起滑出只剩呼吸箭头，悬停滑入；思考增量自动翻译。",
   "type": "module",
   "main": "index.js",
   "icon": "./icon.svg",

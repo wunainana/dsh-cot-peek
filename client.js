@@ -768,6 +768,11 @@ window.__ModuleLoader__.load({
     const AUTO_INTERVAL_MS = 2500;
     // Collapse the window this long after a run finishes (a new run cancels it).
     const AUTO_COLLAPSE_MS = 3000;
+    // Edge tab: only this sliver of the window stays on screen while docked.
+    const ARROW_WIDTH = 26;
+    const HIDE_DELAY_MS = 1500;
+    const SNAP_DISTANCE = 64;
+    const SLIDE_MS = 380;
 
     function readAuto() {
       try {
@@ -780,6 +785,27 @@ window.__ModuleLoader__.load({
     function writeAuto(value) {
       try {
         window.localStorage.setItem(AUTO_KEY, value ? '1' : '0');
+      } catch (error) {
+        /* storage may be unavailable */
+      }
+    }
+
+    // Which viewport edge the window docks to; null means free-floating.
+    const DOCK_KEY = 'dsh-cot-peek:dock';
+
+    function readDock() {
+      try {
+        const raw = window.localStorage.getItem(DOCK_KEY);
+        return raw === 'left' || raw === 'right' ? raw : null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function writeDock(value) {
+      try {
+        if (value === 'left' || value === 'right') window.localStorage.setItem(DOCK_KEY, value);
+        else window.localStorage.removeItem(DOCK_KEY);
       } catch (error) {
         /* storage may be unavailable */
       }
@@ -815,6 +841,10 @@ window.__ModuleLoader__.load({
       const desired = React.useRef(null);
       if (desired.current === null) desired.current = readRect(null);
       const [rect, setRect] = React.useState(() => normalizeRect(desired.current, null));
+      const [docked, setDocked] = React.useState(() => readDock() ?? (readCollapsed() ? 'right' : null));
+      const [peek, setPeek] = React.useState(false);
+      const [dragging, setDragging] = React.useState(false);
+      const [resizing, setResizing] = React.useState(false);
       const engine = React.useRef(null);
       const autoState = React.useRef({ auto: true, available: false, sessionId: null, reasoning: '' });
       const autoDone = React.useRef(0);
@@ -826,35 +856,91 @@ window.__ModuleLoader__.load({
       const firstSession = React.useRef(true);
       const boundsRef = React.useRef(bounds);
       boundsRef.current = bounds;
+      const rectRef = React.useRef(rect);
+      rectRef.current = rect;
+      const dockedRef = React.useRef(docked);
+      dockedRef.current = docked;
+      const collapsedRef = React.useRef(collapsed);
+      collapsedRef.current = collapsed;
+      const hideTimer = React.useRef(null);
+      const hoverRef = React.useRef(false);
 
       // Keep the interval's view of the world fresh without restarting it on
       // every streamed token.
       autoState.current = { auto, available, sessionId, reasoning };
 
+      function clearHideTimer() {
+        if (hideTimer.current !== null) {
+          window.clearTimeout(hideTimer.current);
+          hideTimer.current = null;
+        }
+      }
+
+      function nearestDock(targetRect) {
+        const viewportWidth = window.innerWidth;
+        if (targetRect.x <= SNAP_DISTANCE) return 'left';
+        if (targetRect.x + targetRect.w >= viewportWidth - SNAP_DISTANCE) return 'right';
+        return targetRect.x + targetRect.w / 2 >= viewportWidth / 2 ? 'right' : 'left';
+      }
+
+      // Retract into the edge tab (the drawer). `automatic` collapses reopen on
+      // the next run; a manual collapse keeps the tab closed.
+      function collapseToEdge(automatic) {
+        clearHideTimer();
+        const side = dockedRef.current === null ? nearestDock(rectRef.current) : dockedRef.current;
+        if (dockedRef.current !== side) {
+          setDocked(side);
+          writeDock(side);
+        }
+        autoCollapsed.current = automatic === true;
+        setPeek(false);
+        setCollapsed(true);
+        writeCollapsed(true);
+      }
+
+      function expandWindow() {
+        clearHideTimer();
+        autoCollapsed.current = false;
+        setPeek(false);
+        setCollapsed(false);
+        writeCollapsed(false);
+      }
+
+      const handleWindowEnter = () => {
+        hoverRef.current = true;
+        clearHideTimer();
+        if (collapsed) setPeek(true);
+      };
+
+      const handleWindowLeave = () => {
+        hoverRef.current = false;
+        if (!collapsed) return;
+        clearHideTimer();
+        hideTimer.current = window.setTimeout(() => {
+          hideTimer.current = null;
+          if (collapsedRef.current) setPeek(false);
+        }, HIDE_DELAY_MS);
+      };
+
       // Follow the conversation column: clamp the visible rect whenever the
       // measured bounds change (window resize, sidebar opening/closing).
       React.useEffect(() => {
-        setRect(normalizeRect(desired.current, bounds));
+        if (dockedRef.current === null) setRect(normalizeRect(desired.current, bounds));
       }, [bounds]);
 
       // Collapse three seconds after a run finishes; a new run cancels it and
-      // reopens the window if the collapse was automatic (manual stays shut).
+      // slides the window back in if the collapse was automatic.
       React.useEffect(() => {
         if (running) {
           wasRunning.current = true;
-          if (autoCollapsed.current) {
-            autoCollapsed.current = false;
-            setCollapsed(false);
-            writeCollapsed(false);
-          }
+          if (autoCollapsed.current) expandWindow();
           return undefined;
         }
         if (!wasRunning.current) return undefined;
         wasRunning.current = false;
         const id = window.setTimeout(() => {
-          autoCollapsed.current = true;
-          setCollapsed(true);
-          writeCollapsed(true);
+          // Don't yank the window away while the pointer is still on it.
+          if (!hoverRef.current) collapseToEdge(true);
         }, AUTO_COLLAPSE_MS);
         return () => window.clearTimeout(id);
       }, [running]);
@@ -900,11 +986,9 @@ window.__ModuleLoader__.load({
           firstSession.current = false;
           return;
         }
-        // Switching conversations retracts the drawer; a new run reopens it.
+        // Switching conversations retracts the drawer; a new run slides it back.
         if (running) return;
-        autoCollapsed.current = true;
-        setCollapsed(true);
-        writeCollapsed(true);
+        collapseToEdge(true);
       }, [sessionId]);
 
       React.useEffect(
@@ -923,22 +1007,45 @@ window.__ModuleLoader__.load({
       }, [translation.output, translation.tail, reasoning, collapsed]);
 
       React.useEffect(() => {
-        const handle = () => setRect(normalizeRect(desired.current, boundsRef.current));
+        const handle = () => {
+          if (dockedRef.current === null) {
+            setRect(normalizeRect(desired.current, boundsRef.current));
+            return;
+          }
+          setRect((previous) => ({
+            ...previous,
+            y: clamp(previous.y, 8, Math.max(8, window.innerHeight - 48)),
+          }));
+        };
         window.addEventListener('resize', handle);
         return () => window.removeEventListener('resize', handle);
       }, []);
 
+      // Drag with edge snapping: release near a viewport edge docks the window
+      // there; release in the middle makes it free-floating again.
       const beginDrag = (event) => {
         if (event.button !== 0) return;
         const target = event.target;
         if (target !== null && typeof target.closest === 'function' && target.closest('button') !== null) return;
+        clearHideTimer();
+        const side = dockedRef.current;
+        const current = rectRef.current;
+        const startX =
+          side === 'left' ? 0 : side === 'right' ? Math.max(0, window.innerWidth - current.w) : current.x;
+        desired.current = { ...desired.current, x: startX, y: current.y, w: current.w, h: current.h };
+        if (side !== null) {
+          setDocked(null);
+          writeDock(null);
+        }
         drag.current = {
           pointerId: event.pointerId,
           startX: event.clientX,
           startY: event.clientY,
-          baseX: desired.current.x,
-          baseY: desired.current.y,
+          baseX: startX,
+          baseY: current.y,
+          width: current.w,
         };
+        setDragging(true);
         if (typeof event.currentTarget.setPointerCapture === 'function') {
           event.currentTarget.setPointerCapture(event.pointerId);
         }
@@ -947,16 +1054,11 @@ window.__ModuleLoader__.load({
       const moveDrag = (event) => {
         const session = drag.current;
         if (session === null || session.pointerId !== event.pointerId) return;
-        const area = horizontalArea(boundsRef.current);
-        const width = clamp(
-          Number(desired.current.w) || 680,
-          MIN_WIDTH,
-          Math.max(MIN_WIDTH, area.right - area.left),
-        );
+        const width = session.width;
         const x = clamp(
           session.baseX + event.clientX - session.startX,
-          area.left,
-          Math.max(area.left, area.right - width),
+          0,
+          Math.max(0, window.innerWidth - width),
         );
         const y = clamp(
           session.baseY + event.clientY - session.startY,
@@ -964,14 +1066,32 @@ window.__ModuleLoader__.load({
           Math.max(8, window.innerHeight - 48),
         );
         desired.current = { ...desired.current, x, y };
-        setRect(normalizeRect(desired.current, boundsRef.current));
+        setRect({ x, y, w: width, h: desired.current.h });
       };
 
       const endDrag = (event) => {
         if (drag.current === null) return;
         drag.current = null;
+        setDragging(false);
         if (typeof event.currentTarget.releasePointerCapture === 'function') {
           event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        const current = desired.current;
+        const viewportWidth = window.innerWidth;
+        let side = null;
+        if (current.x <= SNAP_DISTANCE) side = 'left';
+        else if (current.x + current.w >= viewportWidth - SNAP_DISTANCE) side = 'right';
+        setDocked(side);
+        writeDock(side);
+        if (side === null) {
+          setRect(normalizeRect(desired.current, boundsRef.current));
+        } else {
+          setRect({
+            x: side === 'left' ? 0 : Math.max(0, viewportWidth - current.w),
+            y: clamp(current.y, 8, Math.max(8, window.innerHeight - 48)),
+            w: current.w,
+            h: current.h,
+          });
         }
         saveRect(desired.current);
       };
@@ -980,13 +1100,16 @@ window.__ModuleLoader__.load({
         if (event.button !== 0) return;
         event.preventDefault();
         event.stopPropagation();
+        clearHideTimer();
         resize.current = {
           pointerId: event.pointerId,
           startX: event.clientX,
           startY: event.clientY,
-          baseW: desired.current.w,
-          baseH: desired.current.h,
+          baseW: rectRef.current.w,
+          baseH: rectRef.current.h,
         };
+        desired.current = { ...desired.current, w: rectRef.current.w, h: rectRef.current.h };
+        setResizing(true);
         if (typeof event.currentTarget.setPointerCapture === 'function') {
           event.currentTarget.setPointerCapture(event.pointerId);
         }
@@ -995,18 +1118,18 @@ window.__ModuleLoader__.load({
       const moveResize = (event) => {
         const session = resize.current;
         if (session === null || session.pointerId !== event.pointerId) return;
-        const area = horizontalArea(boundsRef.current);
-        const maxWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, area.right - area.left));
+        const maxWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, window.innerWidth - 16));
         const maxHeight = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, window.innerHeight - 80));
         const w = clamp(session.baseW + event.clientX - session.startX, MIN_WIDTH, maxWidth);
         const h = clamp(session.baseH + event.clientY - session.startY, MIN_HEIGHT, maxHeight);
         desired.current = { ...desired.current, w, h };
-        setRect(normalizeRect(desired.current, boundsRef.current));
+        setRect((previous) => ({ ...previous, w, h }));
       };
 
       const endResize = (event) => {
         if (resize.current === null) return;
         resize.current = null;
+        setResizing(false);
         if (typeof event.currentTarget.releasePointerCapture === 'function') {
           event.currentTarget.releasePointerCapture(event.pointerId);
         }
@@ -1109,15 +1232,56 @@ window.__ModuleLoader__.load({
       const translateTitle = available ? t('translateHint') : describeReason();
 
       const toggleCollapsed = () => {
-        const next = !collapsed;
-        autoCollapsed.current = false;
-        setCollapsed(next);
-        writeCollapsed(next);
+        if (collapsed) expandWindow();
+        else collapseToEdge(false);
       };
 
-      const windowStyle = collapsed
-        ? { left: rect.x + 'px', top: rect.y + 'px', width: Math.min(rect.w, 460) + 'px' }
-        : { left: rect.x + 'px', top: rect.y + 'px', width: rect.w + 'px', height: rect.h + 'px' };
+      const windowStyle = (() => {
+        const viewportWidth = window.innerWidth;
+        const hidden = collapsed && peek !== true;
+        let left = rect.x;
+        let offset = 0;
+        if (docked === 'left') {
+          left = 0;
+          if (hidden) offset = -(rect.w - ARROW_WIDTH);
+        } else if (docked === 'right') {
+          left = Math.max(0, viewportWidth - rect.w);
+          if (hidden) offset = rect.w - ARROW_WIDTH;
+        }
+        return {
+          left: left + 'px',
+          top: rect.y + 'px',
+          width: rect.w + 'px',
+          height: rect.h + 'px',
+          transform: 'translateX(' + offset + 'px)',
+          transition:
+            dragging || resizing ? 'none' : 'transform ' + SLIDE_MS + 'ms cubic-bezier(.4,.0,.2,1)',
+        };
+      })();
+
+      const edgeArrow =
+        docked === null || !collapsed
+          ? null
+          : h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsh-cot-peek__edge',
+                'data-side': docked,
+                'aria-label': t('expand'),
+                title: summary !== '' ? summary : t('expand'),
+                onClick: (event) => {
+                  event.stopPropagation();
+                  clearHideTimer();
+                  setPeek(true);
+                },
+              },
+              h(
+                'span',
+                { className: 'dsh-cot-peek__edgeGlyph', 'aria-hidden': 'true' },
+                docked === 'left' ? '›' : '‹',
+              ),
+            );
 
       const autoButton = available
         ? h(
@@ -1195,50 +1359,21 @@ window.__ModuleLoader__.load({
         onPointerCancel: endResize,
       };
 
-      // Collapsed drawer: actions on top, the one-line summary underneath.
-      if (collapsed) {
-        return h(
-          'section',
-          {
-            className: 'dsh-cot-peek',
-            style: windowStyle,
-            'data-collapsed': 'true',
-            'data-running': running ? 'true' : undefined,
-            role: 'region',
-            'aria-label': t('title'),
-          },
-          h(
-            'div',
-            { className: 'dsh-cot-peek__drawer', ...dragHandlers },
-            h(
-              'div',
-              { className: 'dsh-cot-peek__drawer-actions' },
-              h('span', { className: 'dsh-cot-peek__glyph', 'aria-hidden': 'true' }, '✳'),
-              running ? h('span', { className: 'dsh-cot-peek__pulse', 'aria-hidden': 'true' }) : null,
-              autoButton,
-              translateButton,
-              viewButton,
-              h('span', { className: 'dsh-cot-peek__spacer' }),
-              flagNode,
-              collapseButton,
-            ),
-            h(
-              'div',
-              { className: 'dsh-cot-peek__drawer-text' },
-              summary !== '' ? summary : t('idle'),
-            ),
-          ),
-        );
-      }
-
+      // The window always renders the same tree; while docked and closed it is
+      // translated off-screen so only the breathing edge arrow stays visible.
       return h(
         'section',
         {
           className: 'dsh-cot-peek',
           style: windowStyle,
+          'data-collapsed': collapsed ? 'true' : undefined,
+          'data-hidden': collapsed && peek !== true ? 'true' : undefined,
+          'data-docked': docked === null ? undefined : docked,
           'data-running': running ? 'true' : undefined,
           role: 'region',
           'aria-label': t('title'),
+          onMouseEnter: handleWindowEnter,
+          onMouseLeave: handleWindowLeave,
         },
         h(
           'header',
@@ -1266,6 +1401,7 @@ window.__ModuleLoader__.load({
           content,
         ),
         h('div', { className: 'dsh-cot-peek__resize', 'aria-hidden': 'true', ...resizeHandlers }),
+        edgeArrow,
       );
     }
 
@@ -1280,10 +1416,12 @@ window.__ModuleLoader__.load({
       '.dsh-cot-peek[data-running="true"]{border-color:var(--dsw-alias-brand-primary)}',
       '.dsh-cot-peek__head{display:flex;align-items:center;gap:8px;min-height:34px;padding:5px 10px;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}',
       '.dsh-cot-peek__head:active{cursor:grabbing}',
-      '.dsh-cot-peek__drawer{display:flex;flex-direction:column;gap:6px;padding:7px 10px;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}',
-      '.dsh-cot-peek__drawer:active{cursor:grabbing}',
-      '.dsh-cot-peek__drawer-actions{display:flex;align-items:center;gap:4px;min-height:20px}',
-      '.dsh-cot-peek__drawer-text{font-size:12px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-cot-peek__edge{position:absolute;top:50%;transform:translateY(-50%);width:26px;height:64px;display:flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-brand-primary);font-size:16px;line-height:1;cursor:pointer;padding:0;box-shadow:0 2px 10px rgba(0,0,0,.25);animation:dsh-cot-peek-breathe 2.6s ease-in-out infinite;pointer-events:auto}',
+      '.dsh-cot-peek__edge[data-side="left"]{right:0;border-top-right-radius:0;border-bottom-right-radius:0}',
+      '.dsh-cot-peek__edge[data-side="right"]{left:0;border-top-left-radius:0;border-bottom-left-radius:0}',
+      '.dsh-cot-peek__edge:hover,.dsh-cot-peek__edge:focus-visible{color:var(--dsw-alias-brand-primary);animation-play-state:paused;opacity:1}',
+      '.dsh-cot-peek__edge:focus-visible{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:-2px}',
+      '@keyframes dsh-cot-peek-breathe{0%,100%{opacity:.45}50%{opacity:1}}',
       '.dsh-cot-peek__glyph{flex:none;color:var(--dsw-alias-brand-primary);font-size:12px;line-height:1}',
       '.dsh-cot-peek__title{flex:none;font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary);letter-spacing:.02em}',
       '.dsh-cot-peek__pulse{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-brand-primary);animation:dsh-cot-peek-pulse 1.2s ease-in-out infinite}',
@@ -1304,6 +1442,7 @@ window.__ModuleLoader__.load({
       '.dsh-cot-peek__resize::after{content:"";position:absolute;right:3px;bottom:3px;width:7px;height:7px;border-right:2px solid var(--dsw-alias-label-secondary);border-bottom:2px solid var(--dsw-alias-label-secondary);opacity:.45;border-bottom-right-radius:2px}',
       '@keyframes dsh-cot-peek-pulse{0%,100%{opacity:1}50%{opacity:.25}}',
       '@media (prefers-reduced-motion:reduce){.dsh-cot-peek__pulse{animation:none}}',
+      '@media (prefers-reduced-motion:reduce){.dsh-cot-peek__edge{animation:none;opacity:1}}',
     ].join('');
 
     // ------------------------------------------------------------------
