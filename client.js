@@ -823,6 +823,7 @@ window.__ModuleLoader__.load({
       const resize = React.useRef(null);
       const wasRunning = React.useRef(false);
       const autoCollapsed = React.useRef(false);
+      const firstSession = React.useRef(true);
       const boundsRef = React.useRef(bounds);
       boundsRef.current = bounds;
 
@@ -892,7 +893,18 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         setTranslation({ output: '', tail: '', pending: false, failed: false });
         setTranslatedText('');
-        autoDone.current = 0;
+        // Never machine-translate the history that loads with a conversation:
+        // only text that arrives from now on counts as new.
+        autoDone.current = typeof reasoning === 'string' ? reasoning.length : 0;
+        if (firstSession.current) {
+          firstSession.current = false;
+          return;
+        }
+        // Switching conversations retracts the drawer; a new run reopens it.
+        if (running) return;
+        autoCollapsed.current = true;
+        setCollapsed(true);
+        writeCollapsed(true);
       }, [sessionId]);
 
       React.useEffect(
@@ -1104,119 +1116,156 @@ window.__ModuleLoader__.load({
       };
 
       const windowStyle = collapsed
-        ? { left: rect.x + 'px', top: rect.y + 'px' }
+        ? { left: rect.x + 'px', top: rect.y + 'px', width: Math.min(rect.w, 460) + 'px' }
         : { left: rect.x + 'px', top: rect.y + 'px', width: rect.w + 'px', height: rect.h + 'px' };
+
+      const autoButton = available
+        ? h(
+            'button',
+            {
+              type: 'button',
+              className: 'dsh-cot-peek__toggle',
+              'data-active': auto ? 'true' : undefined,
+              'aria-pressed': auto ? 'true' : 'false',
+              title: auto ? t('autoOn') : t('autoOff'),
+              onClick: toggleAuto,
+            },
+            t('auto'),
+          )
+        : null;
+      const translateButton =
+        original.trim() !== ''
+          ? h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsh-cot-peek__toggle',
+                'data-primary': 'true',
+                disabled: translation.pending,
+                title: translateTitle,
+                onClick: translateNow,
+              },
+              translateLabel,
+            )
+          : null;
+      const viewButton = hasTranslation
+        ? h(
+            'button',
+            {
+              type: 'button',
+              className: 'dsh-cot-peek__toggle',
+              title: view === 'translated' ? t('showOriginal') : t('showTranslated'),
+              onClick: () => setView(view === 'translated' ? 'original' : 'translated'),
+            },
+            view === 'translated' ? t('original') : t('translated'),
+          )
+        : null;
+      const flagNode =
+        flag !== ''
+          ? h(
+              'span',
+              {
+                className: 'dsh-cot-peek__flag',
+                'data-error': flagError ? 'true' : undefined,
+                title: flagTitle !== '' ? flagTitle : undefined,
+              },
+              flag,
+            )
+          : null;
+      const collapseButton = h(
+        'button',
+        {
+          type: 'button',
+          className: 'dsh-cot-peek__toggle',
+          'aria-expanded': collapsed ? 'false' : 'true',
+          onClick: toggleCollapsed,
+        },
+        collapsed ? t('expand') : t('collapse'),
+      );
+      const dragHandlers = {
+        onPointerDown: beginDrag,
+        onPointerMove: moveDrag,
+        onPointerUp: endDrag,
+        onPointerCancel: endDrag,
+      };
+      const resizeHandlers = {
+        onPointerDown: beginResize,
+        onPointerMove: moveResize,
+        onPointerUp: endResize,
+        onPointerCancel: endResize,
+      };
+
+      // Collapsed drawer: actions on top, the one-line summary underneath.
+      if (collapsed) {
+        return h(
+          'section',
+          {
+            className: 'dsh-cot-peek',
+            style: windowStyle,
+            'data-collapsed': 'true',
+            'data-running': running ? 'true' : undefined,
+            role: 'region',
+            'aria-label': t('title'),
+          },
+          h(
+            'div',
+            { className: 'dsh-cot-peek__drawer', ...dragHandlers },
+            h(
+              'div',
+              { className: 'dsh-cot-peek__drawer-actions' },
+              h('span', { className: 'dsh-cot-peek__glyph', 'aria-hidden': 'true' }, '✳'),
+              running ? h('span', { className: 'dsh-cot-peek__pulse', 'aria-hidden': 'true' }) : null,
+              autoButton,
+              translateButton,
+              viewButton,
+              h('span', { className: 'dsh-cot-peek__spacer' }),
+              flagNode,
+              collapseButton,
+            ),
+            h(
+              'div',
+              { className: 'dsh-cot-peek__drawer-text' },
+              summary !== '' ? summary : t('idle'),
+            ),
+          ),
+        );
+      }
 
       return h(
         'section',
         {
           className: 'dsh-cot-peek',
           style: windowStyle,
-          'data-collapsed': collapsed ? 'true' : undefined,
           'data-running': running ? 'true' : undefined,
           role: 'region',
           'aria-label': t('title'),
         },
         h(
           'header',
-          {
-            className: 'dsh-cot-peek__head',
-            onPointerDown: beginDrag,
-            onPointerMove: moveDrag,
-            onPointerUp: endDrag,
-            onPointerCancel: endDrag,
-          },
+          { className: 'dsh-cot-peek__head', ...dragHandlers },
           h('span', { className: 'dsh-cot-peek__glyph', 'aria-hidden': 'true' }, '✳'),
           h('span', { className: 'dsh-cot-peek__title' }, t('title')),
           running ? h('span', { className: 'dsh-cot-peek__pulse', 'aria-hidden': 'true' }) : null,
           running ? h('span', { className: 'dsh-cot-peek__state' }, t('thinking')) : null,
-          collapsed && summary !== '' ? h('span', { className: 'dsh-cot-peek__summary' }, summary) : null,
-          flag !== ''
-            ? h(
-                'span',
-                {
-                  className: 'dsh-cot-peek__flag',
-                  'data-error': flagError ? 'true' : undefined,
-                  title: flagTitle !== '' ? flagTitle : undefined,
-                },
-                flag,
-              )
-            : null,
+          flagNode,
           h('span', { className: 'dsh-cot-peek__spacer' }),
-          available
-            ? h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'dsh-cot-peek__toggle',
-                  'data-active': auto ? 'true' : undefined,
-                  'aria-pressed': auto ? 'true' : 'false',
-                  title: auto ? t('autoOn') : t('autoOff'),
-                  onClick: toggleAuto,
-                },
-                t('auto'),
-              )
-            : null,
-          original.trim() !== ''
-            ? h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'dsh-cot-peek__toggle',
-                  'data-primary': 'true',
-                  disabled: translation.pending,
-                  title: translateTitle,
-                  onClick: translateNow,
-                },
-                translateLabel,
-              )
-            : null,
-          hasTranslation
-            ? h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'dsh-cot-peek__toggle',
-                  title: view === 'translated' ? t('showOriginal') : t('showTranslated'),
-                  onClick: () => setView(view === 'translated' ? 'original' : 'translated'),
-                },
-                view === 'translated' ? t('original') : t('translated'),
-              )
-            : null,
-          h(
-            'button',
-            {
-              type: 'button',
-              className: 'dsh-cot-peek__toggle',
-              'aria-expanded': collapsed ? 'false' : 'true',
-              onClick: toggleCollapsed,
-            },
-            collapsed ? t('expand') : t('collapse'),
-          ),
+          autoButton,
+          translateButton,
+          viewButton,
+          collapseButton,
         ),
-        collapsed
-          ? null
-          : h(
-              'div',
-              {
-                className: 'dsh-cot-peek__body',
-                ref: body,
-                'data-view': showTranslated ? 'translated' : 'original',
-                role: 'log',
-                'aria-live': running ? 'polite' : 'off',
-              },
-              content,
-            ),
-        collapsed
-          ? null
-          : h('div', {
-              className: 'dsh-cot-peek__resize',
-              'aria-hidden': 'true',
-              onPointerDown: beginResize,
-              onPointerMove: moveResize,
-              onPointerUp: endResize,
-              onPointerCancel: endResize,
-            }),
+        h(
+          'div',
+          {
+            className: 'dsh-cot-peek__body',
+            ref: body,
+            'data-view': showTranslated ? 'translated' : 'original',
+            role: 'log',
+            'aria-live': running ? 'polite' : 'off',
+          },
+          content,
+        ),
+        h('div', { className: 'dsh-cot-peek__resize', 'aria-hidden': 'true', ...resizeHandlers }),
       );
     }
 
@@ -1231,6 +1280,10 @@ window.__ModuleLoader__.load({
       '.dsh-cot-peek[data-running="true"]{border-color:var(--dsw-alias-brand-primary)}',
       '.dsh-cot-peek__head{display:flex;align-items:center;gap:8px;min-height:34px;padding:5px 10px;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}',
       '.dsh-cot-peek__head:active{cursor:grabbing}',
+      '.dsh-cot-peek__drawer{display:flex;flex-direction:column;gap:6px;padding:7px 10px;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}',
+      '.dsh-cot-peek__drawer:active{cursor:grabbing}',
+      '.dsh-cot-peek__drawer-actions{display:flex;align-items:center;gap:4px;min-height:20px}',
+      '.dsh-cot-peek__drawer-text{font-size:12px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dsh-cot-peek__glyph{flex:none;color:var(--dsw-alias-brand-primary);font-size:12px;line-height:1}',
       '.dsh-cot-peek__title{flex:none;font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary);letter-spacing:.02em}',
       '.dsh-cot-peek__pulse{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-brand-primary);animation:dsh-cot-peek-pulse 1.2s ease-in-out infinite}',
