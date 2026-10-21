@@ -48,6 +48,7 @@ window.__ModuleLoader__.load({
       modelsEmpty: 'Endpoint returned no models',
       probeOk: 'Connected · sample translation: ',
       probeFailed: 'Failed: ',
+      needModel: 'This endpoint requires a model name — press "Fetch models" and pick one',
       hostMissing: 'Host route missing — restart DSH once so the proxy loads',
       settingsTitle: 'Thinking Peek · translation',
       settingsDesc: 'Pick the engine that translates the reasoning text.',
@@ -99,6 +100,7 @@ window.__ModuleLoader__.load({
       modelsEmpty: '端点没有返回模型',
       probeOk: '连接成功 · 试翻：',
       probeFailed: '失败：',
+      needModel: '这个端点必须填模型名 —— 点「拉取模型列表」选一个',
       hostMissing: '宿主路由未加载 —— 重启一次 DSH 才会挂上代理',
       settingsTitle: '思考小窗 · 翻译设置',
       settingsDesc: '选择翻译思考内容所用的引擎。',
@@ -1895,6 +1897,9 @@ window.__ModuleLoader__.load({
           });
           const ids = Array.isArray(data.models) ? data.models : [];
           setModels(ids);
+          if (ids.length > 0 && draft.model.trim() === '') {
+            setDraft({ ...draft, model: ids[0] });
+          }
           setProbe(ids.length === 0 ? t('modelsEmpty') : t('modelsFound') + ' ' + ids.length);
         } catch (error) {
           setProbe(t('probeFailed') + String(error.message ?? error));
@@ -1916,7 +1921,9 @@ window.__ModuleLoader__.load({
           const sample = typeof data.text === 'string' ? data.text.slice(0, 40) : '';
           setProbe(t('probeOk') + sample);
         } catch (error) {
-          setProbe(t('probeFailed') + String(error.message ?? error));
+          const message = String(error.message ?? error);
+          const needsModel = message.includes('model must be a string') || message.includes('model is required') || message.includes('`model`');
+          setProbe(needsModel ? t('needModel') : t('probeFailed') + message);
         } finally {
           setBusy(false);
         }
