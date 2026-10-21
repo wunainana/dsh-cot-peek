@@ -51,7 +51,7 @@ window.__ModuleLoader__.load({
       oaKeyLabel: 'API key (optional)',
       oaSaved: 'Saved. The window picks this up immediately.',
       oaNeedUrl: 'Fill in the endpoint URL first.',
-      oaCorsNote: 'The browser calls the endpoint directly, so it must allow CORS (LM Studio: enable CORS in Server settings; Ollama: OLLAMA_ORIGINS=*). Code, URLs and terms are shielded before sending.',
+      oaCorsNote: 'Loopback / private endpoints are forwarded by the DSH Host proxy, so no CORS is needed (this also covers gateways like dsh-our-free-model on 127.0.0.1:8326). Public https endpoints are still called by the browser and must allow CORS. Code, URLs and terms are shielded before sending.',
     };
     const zh = {
       title: '思考小窗',
@@ -95,7 +95,7 @@ window.__ModuleLoader__.load({
       oaKeyLabel: 'API Key（可选）',
       oaSaved: '已保存，小窗会立刻生效。',
       oaNeedUrl: '先填端点地址。',
-      oaCorsNote: '浏览器会直连该端点，所以它必须允许跨域（LM Studio：Server 设置里打开 CORS；Ollama：OLLAMA_ORIGINS=*）。发送前会先对代码、URL 和术语做占位保护。',
+      oaCorsNote: '本地 / 内网地址会走 DSH 宿时代理转发，不受 CORS 限制（比如 our-free-model 的 127.0.0.1:8326 也能直接接）；公网 https 地址仍由浏览器直连，需要它允许跨域。发送前会先对代码、URL 和术语做占位保护。',
     };
 
     // ------------------------------------------------------------------
@@ -679,10 +679,72 @@ window.__ModuleLoader__.load({
 
       // Reads text through the configured OpenAI-compatible endpoint. The
       // placeholder shield runs before the request, so code/URLs/terms survive.
+      //
+      // Two transports:
+      //  - the Host proxy (`/api/dsh-cot-peek/translate`) for loopback/private
+      //    endpoints, which removes the CORS requirement entirely;
+      //  - plain browser fetch for anything else (public https gateways that
+      //    already allow CORS).
+      const PROXY_URL = '/api/dsh-cot-peek/translate';
+      let proxyState = null; // null = unknown, true = works, false = absent
+
+      const chatCompletionsUrl = (baseUrl) => {
+        const trimmed = baseUrl.replace(/\/+$/, '');
+        if (/\/chat\/completions$/.test(trimmed)) return trimmed;
+        return trimmed + '/chat/completions';
+      };
+
+      const translateViaProxy = async (config, shielded, signal) => {
+        const response = await fetch(PROXY_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            baseUrl: config.baseUrl,
+            model: config.model,
+            apiKey: config.apiKey,
+            text: shielded.text,
+          }),
+          signal,
+        });
+        if (response.status === 404 || response.status === 405) {
+          proxyState = false;
+          return null;
+        }
+        proxyState = true;
+        let payload = null;
+        try {
+          payload = await response.json();
+        } catch (error) {
+          payload = null;
+        }
+        if (!response.ok || payload === null || payload.ok !== true) {
+          const message = payload !== null && typeof payload.error === 'string' ? payload.error : 'proxy ' + response.status;
+          throw new Error(message);
+        }
+        if (typeof payload.text !== 'string' || payload.text.trim() === '') {
+          throw new Error('endpoint returned an empty translation');
+        }
+        return payload.text.trim();
+      };
+
       const translateViaOA = async (source, signal) => {
         const config = readOA();
         if (config === null) throw new Error('no translation endpoint configured');
         const shielded = protectText(source);
+
+        if (proxyState !== false) {
+          try {
+            const viaProxy = await translateViaProxy(config, shielded, signal);
+            if (viaProxy !== null) return restoreText(viaProxy, shielded.tokens);
+          } catch (error) {
+            // An aborted request must stay aborted; everything else falls back
+            // to the direct fetch, which is the only path for public gateways.
+            if (error instanceof Error && error.name === 'AbortError') throw error;
+            if (proxyState !== true) proxyState = false;
+            else throw error;
+          }
+        }
+
         const headers = { 'Content-Type': 'application/json' };
         if (config.apiKey !== '') headers.Authorization = 'Bearer ' + config.apiKey;
         const payload = {
@@ -694,7 +756,7 @@ window.__ModuleLoader__.load({
           stream: false,
         };
         if (config.model !== '') payload.model = config.model;
-        const response = await fetch(config.baseUrl + '/chat/completions', {
+        const response = await fetch(chatCompletionsUrl(config.baseUrl), {
           method: 'POST',
           headers,
           body: JSON.stringify(payload),
