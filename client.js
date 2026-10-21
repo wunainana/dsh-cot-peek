@@ -32,6 +32,15 @@ window.__ModuleLoader__.load({
       off_contribution: 'Translation plugin not enabled',
       off_limits: 'Translation settings unavailable',
       off_error: 'Translation service error',
+      settings: 'Translation source',
+      settingsOpen: 'Configure translation endpoint',
+      oaUrl: 'OpenAI-compatible base URL (e.g. http://127.0.0.1:1234/v1)',
+      oaModel: 'Model (optional)',
+      oaKey: 'API key (optional)',
+      oaSave: 'Save',
+      oaClear: 'Use official',
+      oaNote: 'Stored in local storage. Code, URLs and terms stay shielded before sending.',
+      oaBadge: 'OA',
     };
     const zh = {
       title: '思考小窗',
@@ -56,6 +65,15 @@ window.__ModuleLoader__.load({
       off_contribution: '翻译插件未启用',
       off_limits: '翻译设置不可用',
       off_error: '翻译服务报错',
+      settings: '翻译通道',
+      settingsOpen: '配置翻译端点',
+      oaUrl: 'OpenAI 兼容地址（如 http://127.0.0.1:1234/v1）',
+      oaModel: '模型（可选）',
+      oaKey: 'API Key（可选）',
+      oaSave: '保存',
+      oaClear: '改用官方',
+      oaNote: '存在本地浏览器。发送前会先对代码、URL 和术语做占位保护。',
+      oaBadge: '本地',
     };
 
     // ------------------------------------------------------------------
@@ -322,6 +340,48 @@ window.__ModuleLoader__.load({
     }
 
     // ------------------------------------------------------------------
+    // Optional OpenAI-compatible translation endpoint (LM Studio / Ollama /
+    // any gateway). When configured it takes priority over the official
+    // cot-translation bundle, so a local model can do the translating.
+    // ------------------------------------------------------------------
+    const OA_KEY = 'dsh-cot-peek:oa';
+
+    function readOA() {
+      try {
+        const raw = window.localStorage.getItem(OA_KEY);
+        if (raw === null) return null;
+        const parsed = JSON.parse(raw);
+        if (parsed === null || typeof parsed !== 'object') return null;
+        const baseUrl = typeof parsed.baseUrl === 'string' ? parsed.baseUrl.trim() : '';
+        if (baseUrl === '') return null;
+        return {
+          baseUrl: baseUrl.replace(/\/+$/, ''),
+          model: typeof parsed.model === 'string' ? parsed.model.trim() : '',
+          apiKey: typeof parsed.apiKey === 'string' ? parsed.apiKey.trim() : '',
+        };
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function writeOA(value) {
+      try {
+        if (value === null || value === undefined) {
+          window.localStorage.removeItem(OA_KEY);
+          return;
+        }
+        window.localStorage.setItem(OA_KEY, JSON.stringify(value));
+      } catch (error) {
+        /* storage may be unavailable */
+      }
+    }
+
+    const OA_SYSTEM_PROMPT =
+      'You are a translation engine. Translate the user text into Simplified Chinese. ' +
+      'Keep code, URLs, file paths, identifiers and placeholder tokens like ⟦1⟧ unchanged. ' +
+      'Output only the translation, no explanations.';
+
+    // ------------------------------------------------------------------
     // Bridge between the composer-dock data seat (the only place that owns
     // the session snapshot) and the frame-wide floating window.
     // ------------------------------------------------------------------
@@ -585,18 +645,73 @@ window.__ModuleLoader__.load({
         return loading;
       };
 
+      const notify = () => {
+        for (const listener of listeners) {
+          try {
+            listener(mounted);
+          } catch (error) {
+            /* a broken listener must not stop the probe loop */
+          }
+        }
+      };
+
+      // Reads text through the configured OpenAI-compatible endpoint. The
+      // placeholder shield runs before the request, so code/URLs/terms survive.
+      const translateViaOA = async (source, signal) => {
+        const config = readOA();
+        if (config === null) throw new Error('no translation endpoint configured');
+        const shielded = protectText(source);
+        const headers = { 'Content-Type': 'application/json' };
+        if (config.apiKey !== '') headers.Authorization = 'Bearer ' + config.apiKey;
+        const payload = {
+          messages: [
+            { role: 'system', content: OA_SYSTEM_PROMPT },
+            { role: 'user', content: shielded.text },
+          ],
+          temperature: 0.2,
+          stream: false,
+        };
+        if (config.model !== '') payload.model = config.model;
+        const response = await fetch(config.baseUrl + '/chat/completions', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+          signal,
+        });
+        if (!response.ok) {
+          let detail = '';
+          try {
+            detail = await response.text();
+          } catch (error) {
+            detail = '';
+          }
+          throw new Error(
+            'endpoint ' + response.status + (detail === '' ? '' : ': ' + detail.slice(0, 160)),
+          );
+        }
+        const json = await response.json();
+        const choice =
+          json !== null && json !== undefined && Array.isArray(json.choices) ? json.choices[0] : undefined;
+        const message = choice === undefined || choice === null ? undefined : choice.message;
+        const text = message === undefined || message === null ? undefined : message.content;
+        if (typeof text !== 'string' || text.trim() === '') {
+          throw new Error('endpoint returned an empty translation');
+        }
+        return restoreText(text.trim(), shielded.tokens);
+      };
+
       const probe = async () => {
-        const value = await loadLimits();
-        const next = value !== undefined && value !== null;
+        let next;
+        if (readOA() !== null) {
+          reason = 'ok';
+          next = true;
+        } else {
+          const value = await loadLimits();
+          next = value !== undefined && value !== null;
+        }
         if (next !== mounted) {
           mounted = next;
-          for (const listener of listeners) {
-            try {
-              listener(mounted);
-            } catch (error) {
-              /* a broken listener must not stop the probe loop */
-            }
-          }
+          notify();
         }
         return mounted;
       };
@@ -630,6 +745,13 @@ window.__ModuleLoader__.load({
       return {
         reason: () => reason,
         available: () => mounted,
+        mode: () => (readOA() !== null ? 'oa' : mounted ? 'official' : 'none'),
+        refresh() {
+          probe().then(
+            () => undefined,
+            () => undefined,
+          );
+        },
         subscribe(listener) {
           listeners.add(listener);
           try {
@@ -651,6 +773,8 @@ window.__ModuleLoader__.load({
           return probe();
         },
         async translate(source, sessionId, signal) {
+          const endpoint = readOA();
+          if (endpoint !== null) return translateViaOA(source, signal);
           const controller = controllerOf();
           if (controller === undefined) throw new Error('cotTranslation unavailable');
           const value = await loadLimits();
@@ -839,6 +963,10 @@ window.__ModuleLoader__.load({
       const [translatedText, setTranslatedText] = React.useState('');
       const [auto, setAuto] = React.useState(readAuto);
       const [notice, setNotice] = React.useState('');
+      const [settingsOpen, setSettingsOpen] = React.useState(false);
+      const [oaDraft, setOaDraft] = React.useState(
+        () => readOA() ?? { baseUrl: '', model: '', apiKey: '' },
+      );
       // `desired` keeps what the user actually asked for, so a sidebar closing
       // can widen the window back instead of leaving it permanently shrunk.
       const desired = React.useRef(null);
@@ -1239,6 +1367,26 @@ window.__ModuleLoader__.load({
         else collapseToEdge(false);
       };
 
+      const openSettings = () => {
+        setOaDraft(readOA() ?? { baseUrl: '', model: '', apiKey: '' });
+        setSettingsOpen((previous) => !previous);
+      };
+
+      const saveEndpoint = () => {
+        const baseUrl = oaDraft.baseUrl.trim();
+        if (baseUrl === '') writeOA(null);
+        else writeOA({ baseUrl, model: oaDraft.model.trim(), apiKey: oaDraft.apiKey.trim() });
+        setSettingsOpen(false);
+        service.refresh();
+      };
+
+      const clearEndpoint = () => {
+        writeOA(null);
+        setOaDraft({ baseUrl: '', model: '', apiKey: '' });
+        setSettingsOpen(false);
+        service.refresh();
+      };
+
       const windowStyle = (() => {
         const viewportWidth = window.innerWidth;
         const hidden = collapsed && peek !== true;
@@ -1360,6 +1508,80 @@ window.__ModuleLoader__.load({
         },
         collapsed ? t('expand') : t('collapse'),
       );
+      const oaActive = service.mode() === 'oa';
+      const oaBadge = oaActive
+        ? h('span', { className: 'dsh-cot-peek__badge', title: t('settings') }, t('oaBadge'))
+        : null;
+      const settingsButton = h(
+        'button',
+        {
+          type: 'button',
+          className: 'dsh-cot-peek__toggle',
+          'aria-pressed': settingsOpen ? 'true' : 'false',
+          title: t('settingsOpen'),
+          onClick: openSettings,
+        },
+        '⚙',
+      );
+      const settingsPanel = settingsOpen
+        ? h(
+            'div',
+            { className: 'dsh-cot-peek__settings' },
+            h('div', { className: 'dsh-cot-peek__settings-title' }, t('settings')),
+            h('input', {
+              className: 'dsh-cot-peek__input',
+              type: 'text',
+              spellCheck: false,
+              placeholder: t('oaUrl'),
+              value: oaDraft.baseUrl,
+              onChange: (event) => setOaDraft({ ...oaDraft, baseUrl: event.target.value }),
+            }),
+            h(
+              'div',
+              { className: 'dsh-cot-peek__settings-row' },
+              h('input', {
+                className: 'dsh-cot-peek__input',
+                type: 'text',
+                spellCheck: false,
+                placeholder: t('oaModel'),
+                value: oaDraft.model,
+                onChange: (event) => setOaDraft({ ...oaDraft, model: event.target.value }),
+              }),
+              h('input', {
+                className: 'dsh-cot-peek__input',
+                type: 'password',
+                spellCheck: false,
+                placeholder: t('oaKey'),
+                value: oaDraft.apiKey,
+                onChange: (event) => setOaDraft({ ...oaDraft, apiKey: event.target.value }),
+              }),
+            ),
+            h('div', { className: 'dsh-cot-peek__settings-note' }, t('oaNote')),
+            h(
+              'div',
+              { className: 'dsh-cot-peek__settings-actions' },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-cot-peek__toggle',
+                  'data-primary': 'true',
+                  onClick: saveEndpoint,
+                },
+                t('oaSave'),
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-cot-peek__toggle',
+                  onClick: clearEndpoint,
+                },
+                t('oaClear'),
+              ),
+            ),
+          )
+        : null;
       const dragHandlers = {
         onPointerDown: beginDrag,
         onPointerMove: moveDrag,
@@ -1397,10 +1619,12 @@ window.__ModuleLoader__.load({
           running ? h('span', { className: 'dsh-cot-peek__pulse', 'aria-hidden': 'true' }) : null,
           running ? h('span', { className: 'dsh-cot-peek__state' }, t('thinking')) : null,
           flagNode,
+          oaBadge,
           h('span', { className: 'dsh-cot-peek__spacer' }),
           autoButton,
           translateButton,
           viewButton,
+          settingsButton,
           collapseButton,
         ),
         h(
@@ -1415,6 +1639,7 @@ window.__ModuleLoader__.load({
           content,
         ),
         h('div', { className: 'dsh-cot-peek__resize', 'aria-hidden': 'true', ...resizeHandlers }),
+        settingsPanel,
         edgeArrow,
       );
     }
@@ -1448,6 +1673,14 @@ window.__ModuleLoader__.load({
       '.dsh-cot-peek__toggle[data-primary="true"]{color:var(--dsw-alias-brand-primary)}',
       '.dsh-cot-peek__toggle[data-active="true"]{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}',
       '.dsh-cot-peek__toggle[disabled]{opacity:.55;cursor:default}',
+      '.dsh-cot-peek__badge{flex:none;font-size:10px;line-height:16px;padding:0 6px;border-radius:8px;color:var(--dsw-alias-brand-primary);border:.5px solid var(--dsw-alias-brand-primary);opacity:.85}',
+      '.dsh-cot-peek__settings{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:inherit;background:var(--dsw-alias-bg-overlay);backdrop-filter:blur(14px)}',
+      '.dsh-cot-peek__settings-title{font-size:12px;color:var(--dsw-alias-label-secondary);letter-spacing:.04em}',
+      '.dsh-cot-peek__settings-row{display:flex;gap:8px}',
+      '.dsh-cot-peek__input{flex:1;min-width:0;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 8px;outline:none}',
+      '.dsh-cot-peek__input:focus{border-color:var(--dsw-alias-brand-primary)}',
+      '.dsh-cot-peek__settings-note{font-size:10.5px;line-height:1.5;color:var(--dsw-alias-label-secondary);opacity:.8}',
+      '.dsh-cot-peek__settings-actions{display:flex;gap:8px;margin-top:auto;justify-content:flex-end}',
       '.dsh-cot-peek__body{flex:1;min-height:0;overflow-y:auto;padding:0 12px 12px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:1.6}',
       '.dsh-cot-peek__body[data-view="original"]{opacity:.82}',
       '.dsh-cot-peek__resize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;touch-action:none}',
