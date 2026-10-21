@@ -42,6 +42,13 @@ window.__ModuleLoader__.load({
       oaClear: 'Use official',
       oaNote: 'Stored in local storage. Code, URLs and terms stay shielded before sending.',
       oaBadge: 'OA',
+      fetchModels: 'Fetch models',
+      testConnection: 'Test connection',
+      modelsFound: 'Models found:',
+      modelsEmpty: 'Endpoint returned no models',
+      probeOk: 'Connected · sample translation: ',
+      probeFailed: 'Failed: ',
+      hostMissing: 'Host route missing — restart DSH once so the proxy loads',
       settingsTitle: 'Thinking Peek · translation',
       settingsDesc: 'Pick the engine that translates the reasoning text.',
       engineOfficial: 'Official (Bing / Google / DeepSeek)',
@@ -86,6 +93,13 @@ window.__ModuleLoader__.load({
       oaClear: '改用官方',
       oaNote: '存在本地浏览器。发送前会先对代码、URL 和术语做占位保护。',
       oaBadge: '本地',
+      fetchModels: '拉取模型列表',
+      testConnection: '测试连接',
+      modelsFound: '找到模型：',
+      modelsEmpty: '端点没有返回模型',
+      probeOk: '连接成功 · 试翻：',
+      probeFailed: '失败：',
+      hostMissing: '宿主路由未加载 —— 重启一次 DSH 才会挂上代理',
       settingsTitle: '思考小窗 · 翻译设置',
       settingsDesc: '选择翻译思考内容所用的引擎。',
       engineOfficial: '官方（Bing / Google / DeepSeek）',
@@ -1801,6 +1815,8 @@ window.__ModuleLoader__.load({
       '.dsh-cot-peek-settings__button{border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-brand-primary);color:#fff;border-radius:8px;font:inherit;font-size:12px;padding:5px 12px;cursor:pointer}',
       '.dsh-cot-peek-settings__button--ghost{background:transparent;color:var(--dsw-alias-label-primary)}',
       '.dsh-cot-peek-settings__status{font-size:11px;opacity:.7}',
+      '.dsh-cot-peek-settings__probe{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.dsh-cot-peek-settings__button[disabled]{opacity:.55;cursor:default}',
     ].join('');
 
     // ------------------------------------------------------------------
@@ -1817,6 +1833,9 @@ window.__ModuleLoader__.load({
       const [engine, setEngine] = React.useState(existing === null ? 'official' : 'custom');
       const [draft, setDraft] = React.useState(existing ?? { baseUrl: '', model: '', apiKey: '' });
       const [status, setStatus] = React.useState('');
+      const [models, setModels] = React.useState([]);
+      const [probe, setProbe] = React.useState('');
+      const [busy, setBusy] = React.useState(false);
 
       const refresh = () => {
         if (service !== undefined && service !== null && typeof service.refresh === 'function') {
@@ -1845,6 +1864,62 @@ window.__ModuleLoader__.load({
         setDraft({ baseUrl: '', model: '', apiKey: '' });
         setStatus(t('oaSaved'));
         refresh();
+      };
+
+      const hostCall = async (path, payload) => {
+        const response = await fetch('/api/dsh-cot-peek' + path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        let data = null;
+        try {
+          data = await response.json();
+        } catch (error) {
+          data = null;
+        }
+        if (data === null || typeof data !== 'object') throw new Error(t('hostMissing'));
+        if (!response.ok || data.ok !== true) {
+          throw new Error(typeof data.error === 'string' ? data.error : 'HTTP ' + response.status);
+        }
+        return data;
+      };
+
+      const fetchModels = async () => {
+        setBusy(true);
+        setProbe('');
+        try {
+          const data = await hostCall('/models', {
+            baseUrl: draft.baseUrl.trim(),
+            apiKey: draft.apiKey.trim(),
+          });
+          const ids = Array.isArray(data.models) ? data.models : [];
+          setModels(ids);
+          setProbe(ids.length === 0 ? t('modelsEmpty') : t('modelsFound') + ' ' + ids.length);
+        } catch (error) {
+          setProbe(t('probeFailed') + String(error.message ?? error));
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      const testConnection = async () => {
+        setBusy(true);
+        setProbe('');
+        try {
+          const data = await hostCall('/translate', {
+            baseUrl: draft.baseUrl.trim(),
+            model: draft.model.trim(),
+            apiKey: draft.apiKey.trim(),
+            text: 'Hello',
+          });
+          const sample = typeof data.text === 'string' ? data.text.slice(0, 40) : '';
+          setProbe(t('probeOk') + sample);
+        } catch (error) {
+          setProbe(t('probeFailed') + String(error.message ?? error));
+        } finally {
+          setBusy(false);
+        }
       };
 
       const field = (label, inputProps) =>
@@ -1896,18 +1971,51 @@ window.__ModuleLoader__.load({
                 value: draft.baseUrl,
                 onChange: (event) => setDraft({ ...draft, baseUrl: event.target.value }),
               }),
-              field(t('oaModelLabel'), {
-                type: 'text',
-                placeholder: 'qwen2.5-7b-instruct',
-                value: draft.model,
-                onChange: (event) => setDraft({ ...draft, model: event.target.value }),
-              }),
+              h(
+                'label',
+                { className: 'dsh-cot-peek-settings__field' },
+                h('span', { className: 'dsh-cot-peek-settings__label' }, t('oaModelLabel')),
+                h('input', {
+                  className: 'dsh-cot-peek__input',
+                  spellCheck: false,
+                  list: 'dsh-cot-peek-models',
+                  placeholder: 'qwen2.5-7b-instruct',
+                  value: draft.model,
+                  onChange: (event) => setDraft({ ...draft, model: event.target.value }),
+                }),
+                h('datalist', { id: 'dsh-cot-peek-models' }, models.map((id) => h('option', { key: id, value: id }))),
+              ),
               field(t('oaKeyLabel'), {
                 type: 'password',
                 value: draft.apiKey,
                 onChange: (event) => setDraft({ ...draft, apiKey: event.target.value }),
               }),
               h('div', { className: 'dsh-cot-peek-settings__note' }, t('oaCorsNote')),
+              h(
+                'div',
+                { className: 'dsh-cot-peek-settings__probe' },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-cot-peek-settings__button dsh-cot-peek-settings__button--ghost',
+                    disabled: busy,
+                    onClick: fetchModels,
+                  },
+                  t('fetchModels'),
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-cot-peek-settings__button dsh-cot-peek-settings__button--ghost',
+                    disabled: busy,
+                    onClick: testConnection,
+                  },
+                  t('testConnection'),
+                ),
+                probe !== '' ? h('span', { className: 'dsh-cot-peek-settings__status' }, probe) : null,
+              ),
             )
           : null,
         h(

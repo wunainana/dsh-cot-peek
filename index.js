@@ -99,6 +99,14 @@ function chatCompletionsUrl(baseUrl) {
   return trimmed + '/chat/completions'
 }
 
+/** `/v1/models` next to whatever the configured URL points at. */
+function modelsUrl(baseUrl) {
+  const trimmed = baseUrl.replace(/\/+$/, '')
+  if (/\/chat\/completions$/.test(trimmed)) return trimmed.replace(/\/chat\/completions$/, '') + '/models'
+  if (/\/responses$/.test(trimmed)) return trimmed.replace(/\/responses$/, '') + '/models'
+  return trimmed + '/models'
+}
+
 function createHandler(logger) {
   return async function handler(req, res) {
     let route = '/'
@@ -112,7 +120,7 @@ function createHandler(logger) {
       json(res, 200, { ok: true, proxy: 'dsh-cot-peek' })
       return
     }
-    if (route !== '/translate' || req.method !== 'POST') {
+    if ((route !== '/translate' && route !== '/models') || req.method !== 'POST') {
       json(res, 404, { ok: false, error: 'not found' })
       return
     }
@@ -154,6 +162,52 @@ function createHandler(logger) {
       // called directly by the browser, so the client falls back instead of
       // showing this as a translation failure.
       json(res, 403, { ok: false, skip: true, error: 'public endpoint: call it directly' })
+      return
+    }
+
+    if (route === '/models') {
+      const listHeaders = {}
+      if (typeof body.apiKey === 'string' && body.apiKey !== '') {
+        listHeaders.authorization = 'Bearer ' + body.apiKey
+      }
+      const listController = new AbortController()
+      const listTimer = setTimeout(() => listController.abort(), UPSTREAM_TIMEOUT_MS)
+      let listResponse
+      try {
+        listResponse = await fetch(modelsUrl(baseUrl), { headers: listHeaders, signal: listController.signal })
+      } catch (error) {
+        clearTimeout(listTimer)
+        const message = error instanceof Error ? error.message : String(error)
+        json(res, 502, { ok: false, error: 'endpoint unreachable: ' + message })
+        return
+      }
+      clearTimeout(listTimer)
+      let listRaw = ''
+      try {
+        listRaw = await listResponse.text()
+      } catch (error) {
+        listRaw = ''
+      }
+      if (!listResponse.ok) {
+        json(res, 502, { ok: false, error: 'endpoint ' + listResponse.status + ': ' + listRaw.slice(0, 160) })
+        return
+      }
+      let listData
+      try {
+        listData = JSON.parse(listRaw)
+      } catch (error) {
+        json(res, 502, { ok: false, error: 'endpoint returned non-JSON model list' })
+        return
+      }
+      const rawList = Array.isArray(listData?.data)
+        ? listData.data
+        : Array.isArray(listData?.models)
+          ? listData.models
+          : []
+      const models = rawList
+        .map((entry) => (typeof entry === 'string' ? entry : entry !== null && typeof entry.id === 'string' ? entry.id : ''))
+        .filter((id) => id !== '')
+      json(res, 200, { ok: true, models, count: models.length })
       return
     }
 
