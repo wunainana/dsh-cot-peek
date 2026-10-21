@@ -706,7 +706,10 @@ window.__ModuleLoader__.load({
           }),
           signal,
         });
-        if (response.status === 404 || response.status === 405) {
+        if (response.status === 401 || response.status === 404 || response.status === 405) {
+          // No Host half in this composition (or it was not reloaded yet): the
+          // DSH /api bridge answers "unauthorized" here. Fall back to a direct
+          // browser fetch instead of surfacing it as a translation failure.
           proxyState = false;
           return null;
         }
@@ -717,8 +720,18 @@ window.__ModuleLoader__.load({
         } catch (error) {
           payload = null;
         }
-        if (!response.ok || payload === null || payload.ok !== true) {
-          const message = payload !== null && typeof payload.error === 'string' ? payload.error : 'proxy ' + response.status;
+        if (payload === null || typeof payload !== 'object') {
+          // Something other than our proxy answered (the /api bridge, a proxy
+          // in front of DSH, ...). Treat the proxy as absent.
+          proxyState = false;
+          return null;
+        }
+        if (payload.skip === true) {
+          // The Host proxy exists but will not forward this target (public URL).
+          return null;
+        }
+        if (!response.ok || payload.ok !== true) {
+          const message = typeof payload.error === 'string' ? payload.error : 'proxy ' + response.status;
           throw new Error(message);
         }
         if (typeof payload.text !== 'string' || payload.text.trim() === '') {

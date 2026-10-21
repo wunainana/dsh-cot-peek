@@ -150,7 +150,10 @@ function createHandler(logger) {
       return
     }
     if (!isPrivateHost(parsed.hostname)) {
-      json(res, 403, { ok: false, error: 'the Host proxy only forwards to loopback or private endpoints' })
+      // Not an error the user asked for: public endpoints are supposed to be
+      // called directly by the browser, so the client falls back instead of
+      // showing this as a translation failure.
+      json(res, 403, { ok: false, skip: true, error: 'public endpoint: call it directly' })
       return
     }
 
