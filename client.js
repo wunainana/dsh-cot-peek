@@ -41,6 +41,16 @@ window.__ModuleLoader__.load({
       oaClear: 'Use official',
       oaNote: 'Stored in local storage. Code, URLs and terms stay shielded before sending.',
       oaBadge: 'OA',
+      settingsTitle: 'Thinking Peek · translation',
+      settingsDesc: 'Pick the engine that translates the reasoning text.',
+      engineOfficial: 'Official (Bing / Google / DeepSeek)',
+      engineCustom: 'Custom OpenAI-compatible endpoint',
+      oaUrlLabel: 'Endpoint base URL',
+      oaModelLabel: 'Model (optional)',
+      oaKeyLabel: 'API key (optional)',
+      oaSaved: 'Saved. The window picks this up immediately.',
+      oaNeedUrl: 'Fill in the endpoint URL first.',
+      oaCorsNote: 'The browser calls the endpoint directly, so it must allow CORS (LM Studio: enable CORS in Server settings; Ollama: OLLAMA_ORIGINS=*). Code, URLs and terms are shielded before sending.',
     };
     const zh = {
       title: '思考小窗',
@@ -74,6 +84,16 @@ window.__ModuleLoader__.load({
       oaClear: '改用官方',
       oaNote: '存在本地浏览器。发送前会先对代码、URL 和术语做占位保护。',
       oaBadge: '本地',
+      settingsTitle: '思考小窗 · 翻译设置',
+      settingsDesc: '选择翻译思考内容所用的引擎。',
+      engineOfficial: '官方（Bing / Google / DeepSeek）',
+      engineCustom: '自定义 OpenAI 兼容端点',
+      oaUrlLabel: '端点地址',
+      oaModelLabel: '模型（可选）',
+      oaKeyLabel: 'API Key（可选）',
+      oaSaved: '已保存，小窗会立刻生效。',
+      oaNeedUrl: '先填端点地址。',
+      oaCorsNote: '浏览器会直连该端点，所以它必须允许跨域（LM Studio：Server 设置里打开 CORS；Ollama：OLLAMA_ORIGINS=*）。发送前会先对代码、URL 和术语做占位保护。',
     };
 
     // ------------------------------------------------------------------
@@ -1688,12 +1708,150 @@ window.__ModuleLoader__.load({
       '@keyframes dsh-cot-peek-pulse{0%,100%{opacity:1}50%{opacity:.25}}',
       '@media (prefers-reduced-motion:reduce){.dsh-cot-peek__pulse{animation:none}}',
       '@media (prefers-reduced-motion:reduce){.dsh-cot-peek__edge{animation:none;opacity:1}}',
+      '.dsh-cot-peek-settings{display:flex;flex-direction:column;gap:10px;padding:4px 2px;font-size:13px;line-height:1.55}',
+      '.dsh-cot-peek-settings__title{font-size:14px;font-weight:600}',
+      '.dsh-cot-peek-settings__desc{font-size:12px;opacity:.75}',
+      '.dsh-cot-peek-settings__engines{display:flex;flex-direction:column;gap:6px;margin-top:2px}',
+      '.dsh-cot-peek-settings__radio{display:flex;align-items:center;gap:8px;cursor:pointer}',
+      '.dsh-cot-peek-settings__fields{display:flex;flex-direction:column;gap:8px}',
+      '.dsh-cot-peek-settings__field{display:flex;flex-direction:column;gap:4px}',
+      '.dsh-cot-peek-settings__label{font-size:12px;opacity:.75}',
+      '.dsh-cot-peek-settings__note{font-size:11px;line-height:1.5;opacity:.6}',
+      '.dsh-cot-peek-settings__actions{display:flex;align-items:center;gap:8px;margin-top:4px}',
+      '.dsh-cot-peek-settings__button{border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-brand-primary);color:#fff;border-radius:8px;font:inherit;font-size:12px;padding:5px 12px;cursor:pointer}',
+      '.dsh-cot-peek-settings__button--ghost{background:transparent;color:var(--dsw-alias-label-primary)}',
+      '.dsh-cot-peek-settings__status{font-size:11px;opacity:.7}',
     ].join('');
 
     // ------------------------------------------------------------------
     // Client plugin: a hidden data seat inside the composer dock plus the
     // pinned window in the frame-wide overlay layer.
     // ------------------------------------------------------------------
+    // ------------------------------------------------------------------
+    // Settings page: registered into the plugin settings slot
+    // (plugins.bundle.config) so the engine choice lives in DSH's settings UI.
+    // ------------------------------------------------------------------
+    function SettingsPage(props) {
+      const { t, service } = props;
+      const existing = readOA();
+      const [engine, setEngine] = React.useState(existing === null ? 'official' : 'custom');
+      const [draft, setDraft] = React.useState(existing ?? { baseUrl: '', model: '', apiKey: '' });
+      const [status, setStatus] = React.useState('');
+
+      const refresh = () => {
+        if (service !== undefined && service !== null && typeof service.refresh === 'function') {
+          service.refresh();
+        }
+      };
+
+      const save = () => {
+        if (engine === 'custom') {
+          const baseUrl = draft.baseUrl.trim();
+          if (baseUrl === '') {
+            setStatus(t('oaNeedUrl'));
+            return;
+          }
+          writeOA({ baseUrl, model: draft.model.trim(), apiKey: draft.apiKey.trim() });
+        } else {
+          writeOA(null);
+        }
+        setStatus(t('oaSaved'));
+        refresh();
+      };
+
+      const useOfficial = () => {
+        writeOA(null);
+        setEngine('official');
+        setDraft({ baseUrl: '', model: '', apiKey: '' });
+        setStatus(t('oaSaved'));
+        refresh();
+      };
+
+      const field = (label, inputProps) =>
+        h(
+          'label',
+          { className: 'dsh-cot-peek-settings__field' },
+          h('span', { className: 'dsh-cot-peek-settings__label' }, label),
+          h('input', { className: 'dsh-cot-peek__input', spellCheck: false, ...inputProps }),
+        );
+
+      return h(
+        'div',
+        { className: 'dsh-cot-peek-settings' },
+        h('div', { className: 'dsh-cot-peek-settings__title' }, t('settingsTitle')),
+        h('div', { className: 'dsh-cot-peek-settings__desc' }, t('settingsDesc')),
+        h(
+          'div',
+          { className: 'dsh-cot-peek-settings__engines' },
+          h(
+            'label',
+            { className: 'dsh-cot-peek-settings__radio' },
+            h('input', {
+              type: 'radio',
+              name: 'dsh-cot-peek-engine',
+              checked: engine === 'official',
+              onChange: () => setEngine('official'),
+            }),
+            h('span', null, t('engineOfficial')),
+          ),
+          h(
+            'label',
+            { className: 'dsh-cot-peek-settings__radio' },
+            h('input', {
+              type: 'radio',
+              name: 'dsh-cot-peek-engine',
+              checked: engine === 'custom',
+              onChange: () => setEngine('custom'),
+            }),
+            h('span', null, t('engineCustom')),
+          ),
+        ),
+        engine === 'custom'
+          ? h(
+              'div',
+              { className: 'dsh-cot-peek-settings__fields' },
+              field(t('oaUrlLabel'), {
+                type: 'text',
+                placeholder: 'http://127.0.0.1:1234/v1',
+                value: draft.baseUrl,
+                onChange: (event) => setDraft({ ...draft, baseUrl: event.target.value }),
+              }),
+              field(t('oaModelLabel'), {
+                type: 'text',
+                placeholder: 'qwen2.5-7b-instruct',
+                value: draft.model,
+                onChange: (event) => setDraft({ ...draft, model: event.target.value }),
+              }),
+              field(t('oaKeyLabel'), {
+                type: 'password',
+                value: draft.apiKey,
+                onChange: (event) => setDraft({ ...draft, apiKey: event.target.value }),
+              }),
+              h('div', { className: 'dsh-cot-peek-settings__note' }, t('oaCorsNote')),
+            )
+          : null,
+        h(
+          'div',
+          { className: 'dsh-cot-peek-settings__actions' },
+          h(
+            'button',
+            { type: 'button', className: 'dsh-cot-peek-settings__button', onClick: save },
+            t('oaSave'),
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dsh-cot-peek-settings__button dsh-cot-peek-settings__button--ghost',
+              onClick: useOfficial,
+            },
+            t('oaClear'),
+          ),
+          status !== '' ? h('span', { className: 'dsh-cot-peek-settings__status' }, status) : null,
+        ),
+      );
+    }
+
     // Same service set the official cot-translation client uses: `remote` is
     // what exposes the `remote.cotTranslation` namespace we consume.
     const inject = ['slots', 'locale', 'remote'];
@@ -1714,6 +1872,7 @@ window.__ModuleLoader__.load({
 
       const SourceDock = (props) => h(PeekSource, props);
       const Window = (props) => h(PeekWindow, Object.assign({}, props, { service }));
+      const Settings = (props) => h(SettingsPage, Object.assign({}, props, { service }));
 
       ctx.slots.inject('conversation.input.dock', () =>
         ctx.slots.register(
@@ -1724,6 +1883,17 @@ window.__ModuleLoader__.load({
             locale: NS,
           },
           SourceDock,
+        ),
+      );
+
+      ctx.slots.inject('plugins.bundle.config', () =>
+        ctx.slots.register(
+          {
+            name: 'plugins.bundle.config',
+            key: 'dsh-cot-peek',
+            locale: NS,
+          },
+          Settings,
         ),
       );
 

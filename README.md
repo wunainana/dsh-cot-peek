@@ -65,6 +65,18 @@
 > · **Ollama**：启动前设 `OLLAMA_ORIGINS=*`（或 `OLLAMA_ORIGINS=http://127.0.0.1:*`）
 > 连接被浏览器拦掉时，标题栏会显示「翻译服务报错」，控制台有具体原因。
 
+## 设置页（0.3+）
+
+插件会把自己注册进 DSH 的插件设置页：**设置 → 插件 → 思考小窗 · 翻译设置**。
+在那里可以：
+
+- 选翻译引擎：**官方**（Bing / Google / DeepSeek，走官方实验包）或 **自定义 OpenAI 兼容端点**
+- 填端点地址、模型（可选）、API Key（可选）
+- 点「保存」立即生效；点「改用官方」清空端点
+- 页面上会提示 CORS 要求和隐私说明（发送前已对代码 / URL / 术语做占位保护）
+
+窗口标题栏的 **⚙** 是同一个配置的快捷入口，两边读写同一份 localStorage。
+
 ## 自动 / 手动两种模式
 
 - **自动（默认）**：每 2.5 秒看一眼思考有没有变长，变了就只翻**新增的完结句子**。
@@ -147,7 +159,7 @@ dsh plugin --profile desktop add "git+ssh://git@github.com:wunainana/dsh-cot-pee
 
 ## 发布
 
-- **npm**：已发布 `dsh-cot-peek@0.2.1` → <https://www.npmjs.com/package/dsh-cot-peek>
+- **npm**：已发布 `dsh-cot-peek@0.3.0` → <https://www.npmjs.com/package/dsh-cot-peek>
 - **插件市场索引**：仓库根目录的 `market.json`（格式 1，已通过 DSH 自带
   `@deepseek-ai/dsh-plugin-market-index` 校验）。把它加进
   「设置 → 插件市场 → 索引源」即可在「发现」页看到：
