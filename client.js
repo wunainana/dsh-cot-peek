@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({
       showTranslated: 'Show the Chinese translation',
       translating: 'Translating…',
       translationOff: 'Translation off',
+      hintInstall: 'install the bundle or set an endpoint',
       translationFailed: 'Translation failed — showing original',
       translate: 'Translate',
       retranslate: 'Translate again',
@@ -64,6 +65,7 @@ window.__ModuleLoader__.load({
       showTranslated: '看中文译文',
       translating: '翻译中…',
       translationOff: '翻译未启用',
+      hintInstall: '装官方翻译包或配端点',
       translationFailed: '翻译失败，显示原文',
       translate: '翻译',
       retranslate: '再译',
@@ -1329,9 +1331,12 @@ window.__ModuleLoader__.load({
       let flagError = false;
       let flagTitle = '';
       if (!available) {
-        flag = notice !== '' ? notice : t('translationOff');
+        // Tell people what to do instead of just "translation off": this is the
+        // single most common support question.
+        const hint = describeReason();
+        flag = notice !== '' ? notice : t('translationOff') + ' · ' + t('hintInstall');
         flagError = notice !== '';
-        flagTitle = describeReason();
+        flagTitle = hint;
       } else if (translation.failed) {
         flag = t('translationFailed');
         flagError = true;
