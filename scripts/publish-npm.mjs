@@ -88,7 +88,11 @@ console.log(`[publish] ${name}@${version} is live`);
 const packument = await (
   await fetch(`${registry}/${name}?t=${Date.now()}`, { signal: AbortSignal.timeout(15000) })
 ).json();
-const publishedAt = Math.floor(new Date(packument.time[version]).getTime() / 1000);
+const publishedAtRaw = Math.floor(new Date(packument.time?.[version]).getTime() / 1000);
+// The registry can briefly omit `time` for a fresh version; a NaN here used to
+// serialise as null and made the whole market index invalid. Fall back to now.
+const publishedAt =
+  Number.isInteger(publishedAtRaw) && publishedAtRaw > 0 ? publishedAtRaw : Math.floor(Date.now() / 1000);
 
 const marketPath = join(root, 'market.json');
 const market = JSON.parse(readFileSync(marketPath, 'utf8'));
