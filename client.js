@@ -345,14 +345,15 @@ window.__ModuleLoader__.load({
       const nodes = snapshot.nodes;
       if (!Array.isArray(order) || order.length === 0) return null;
       if (nodes === undefined || nodes === null || typeof nodes.get !== 'function') return null;
-      let fallback = null;
+      // The newest assistant-step is the live one. Preferring an earlier node
+      // merely because it was still marked "running" froze the window on the
+      // first reasoning segment while later steps streamed into newer nodes.
       for (let index = order.length - 1; index >= 0; index -= 1) {
         const node = nodes.get(order[index]);
         if (node === undefined || node === null || node.kind !== 'assistant-step') continue;
-        if (node.data !== undefined && node.data !== null && node.data.status === 'running') return node;
-        if (fallback === null) fallback = node;
+        return node;
       }
-      return fallback;
+      return null;
     }
 
     function selectReasoningText(snapshot) {
@@ -1484,7 +1485,7 @@ window.__ModuleLoader__.load({
       const translateTitle = available ? t('translateHint') : describeReason();
 
       const toggleCollapsed = () => {
-        if (collapsed) expandWindow();
+        if (collapsed && peek !== true) expandWindow();
         else collapseToEdge(false);
       };
 
@@ -1688,15 +1689,16 @@ window.__ModuleLoader__.load({
               flag,
             )
           : null;
+      const visuallyCollapsed = collapsed && peek !== true;
       const collapseButton = h(
         'button',
         {
           type: 'button',
           className: 'dsh-cot-peek__toggle',
-          'aria-expanded': collapsed ? 'false' : 'true',
+          'aria-expanded': visuallyCollapsed ? 'false' : 'true',
           onClick: toggleCollapsed,
         },
-        collapsed ? t('expand') : t('collapse'),
+        visuallyCollapsed ? t('expand') : t('collapse'),
       );
       const oaActive = service.mode() === 'oa';
       const oaBadge = oaActive
