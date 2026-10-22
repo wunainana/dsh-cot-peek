@@ -49,6 +49,7 @@ window.__ModuleLoader__.load({
       probeOk: 'Connected · sample translation: ',
       probeFailed: 'Failed: ',
       needModel: 'This endpoint requires a model name — press "Fetch models" and pick one',
+      modelsSaved: 'Saved · models: ',
       hostMissing: 'Host route missing — restart DSH once so the proxy loads',
       settingsTitle: 'Thinking Peek · translation',
       settingsDesc: 'Pick the engine that translates the reasoning text.',
@@ -101,6 +102,7 @@ window.__ModuleLoader__.load({
       probeOk: '连接成功 · 试翻：',
       probeFailed: '失败：',
       needModel: '这个端点必须填模型名 —— 点「拉取模型列表」选一个',
+      modelsSaved: '已保存 · 模型数：',
       hostMissing: '宿主路由未加载 —— 重启一次 DSH 才会挂上代理',
       settingsTitle: '思考小窗 · 翻译设置',
       settingsDesc: '选择翻译思考内容所用的引擎。',
@@ -1080,6 +1082,9 @@ window.__ModuleLoader__.load({
       const [oaDraft, setOaDraft] = React.useState(
         () => readOA() ?? { baseUrl: '', model: '', apiKey: '' },
       );
+      const [oaModels, setOaModels] = React.useState([]);
+      const [oaProbe, setOaProbe] = React.useState('');
+      const [oaBusy, setOaBusy] = React.useState(false);
       // `desired` keeps what the user actually asked for, so a sidebar closing
       // can widen the window back instead of leaving it permanently shrunk.
       const desired = React.useRef(null);
@@ -1503,6 +1508,75 @@ window.__ModuleLoader__.load({
         service.refresh();
       };
 
+      const hostRequest = async (path, payload) => {
+        const response = await fetch('/api/dsh-cot-peek' + path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        let data = null;
+        try {
+          data = await response.json();
+        } catch (error) {
+          data = null;
+        }
+        if (data === null || typeof data !== 'object') throw new Error(t('hostMissing'));
+        if (!response.ok || data.ok !== true) {
+          throw new Error(typeof data.error === 'string' ? data.error : 'HTTP ' + response.status);
+        }
+        return data;
+      };
+
+      const fetchWindowModels = async () => {
+        setOaBusy(true);
+        setOaProbe('');
+        try {
+          const data = await hostRequest('/models', {
+            baseUrl: oaDraft.baseUrl.trim(),
+            apiKey: oaDraft.apiKey.trim(),
+          });
+          const ids = Array.isArray(data.models) ? data.models : [];
+          setOaModels(ids);
+          let next = oaDraft;
+          if (ids.length > 0 && oaDraft.model.trim() === '') {
+            next = { ...oaDraft, model: ids[0] };
+            setOaDraft(next);
+          }
+          if (next.baseUrl.trim() !== '') {
+            writeOA({ baseUrl: next.baseUrl.trim(), model: next.model.trim(), apiKey: next.apiKey.trim() });
+            service.refresh();
+          }
+          setOaProbe(ids.length === 0 ? t('modelsEmpty') : t('modelsSaved') + ids.length);
+        } catch (error) {
+          const message = String(error.message ?? error);
+          const needsModel = message.includes('model must be a string') || message.includes('model is required');
+          setOaProbe(needsModel ? t('needModel') : t('probeFailed') + message);
+        } finally {
+          setOaBusy(false);
+        }
+      };
+
+      const testWindowConnection = async () => {
+        setOaBusy(true);
+        setOaProbe('');
+        try {
+          const data = await hostRequest('/translate', {
+            baseUrl: oaDraft.baseUrl.trim(),
+            model: oaDraft.model.trim(),
+            apiKey: oaDraft.apiKey.trim(),
+            text: 'Hello',
+          });
+          const sample = typeof data.text === 'string' ? data.text.slice(0, 40) : '';
+          setOaProbe(t('probeOk') + sample);
+        } catch (error) {
+          const message = String(error.message ?? error);
+          const needsModel = message.includes('model must be a string') || message.includes('model is required');
+          setOaProbe(needsModel ? t('needModel') : t('probeFailed') + message);
+        } finally {
+          setOaBusy(false);
+        }
+      };
+
       const windowStyle = (() => {
         const viewportWidth = window.innerWidth;
         const hidden = collapsed && peek !== true;
@@ -1660,6 +1734,7 @@ window.__ModuleLoader__.load({
                 type: 'text',
                 spellCheck: false,
                 placeholder: t('oaModel'),
+                list: 'dsh-cot-peek-window-models',
                 value: oaDraft.model,
                 onChange: (event) => setOaDraft({ ...oaDraft, model: event.target.value }),
               }),
@@ -1672,6 +1747,22 @@ window.__ModuleLoader__.load({
                 onChange: (event) => setOaDraft({ ...oaDraft, apiKey: event.target.value }),
               }),
             ),
+            h('datalist', { id: 'dsh-cot-peek-window-models' }, oaModels.map((id) => h('option', { key: id, value: id }))),
+            h(
+              'div',
+              { className: 'dsh-cot-peek__settings-row' },
+              h(
+                'button',
+                { type: 'button', className: 'dsh-cot-peek__toggle', disabled: oaBusy, onClick: fetchWindowModels },
+                t('fetchModels'),
+              ),
+              h(
+                'button',
+                { type: 'button', className: 'dsh-cot-peek__toggle', disabled: oaBusy, onClick: testWindowConnection },
+                t('testConnection'),
+              ),
+            ),
+            oaProbe !== '' ? h('div', { className: 'dsh-cot-peek__settings-note' }, oaProbe) : null,
             h('div', { className: 'dsh-cot-peek__settings-note' }, t('oaNote')),
             h(
               'div',
@@ -1897,10 +1988,16 @@ window.__ModuleLoader__.load({
           });
           const ids = Array.isArray(data.models) ? data.models : [];
           setModels(ids);
+          const picked = ids.length > 0 && draft.model.trim() === '' ? ids[0] : draft.model.trim();
           if (ids.length > 0 && draft.model.trim() === '') {
-            setDraft({ ...draft, model: ids[0] });
+            setDraft({ ...draft, model: picked });
           }
-          setProbe(ids.length === 0 ? t('modelsEmpty') : t('modelsFound') + ' ' + ids.length);
+          // Persist right away: users read "返回去小窗没保存" as a bug otherwise.
+          if (draft.baseUrl.trim() !== '') {
+            writeOA({ baseUrl: draft.baseUrl.trim(), model: picked, apiKey: draft.apiKey.trim() });
+            refresh();
+          }
+          setProbe(ids.length === 0 ? t('modelsEmpty') : t('modelsSaved') + ids.length);
         } catch (error) {
           setProbe(t('probeFailed') + String(error.message ?? error));
         } finally {
