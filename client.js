@@ -47,6 +47,8 @@ window.__ModuleLoader__.load({
       smoothSlow: 'Slow',
       smoothMid: 'Normal',
       smoothFast: 'Fast',
+      scrollBottom: 'Back to bottom',
+      followingPaused: 'Follow paused — scroll up to read',
       fetchModels: 'Fetch models',
       testConnection: 'Test connection',
       modelsFound: 'Models found:',
@@ -105,6 +107,8 @@ window.__ModuleLoader__.load({
       smoothSlow: '慢',
       smoothMid: '正常',
       smoothFast: '快',
+      scrollBottom: '回到底部',
+      followingPaused: '已暂停跟随，可自由回看',
       fetchModels: '拉取模型列表',
       testConnection: '测试连接',
       modelsFound: '找到模型：',
@@ -1150,6 +1154,7 @@ window.__ModuleLoader__.load({
       const [smooth, setSmooth] = React.useState(readSmoothEnabled);
       const [rate, setRate] = React.useState(readSmoothRate);
       const [revealed, setRevealed] = React.useState(0);
+      const [atBottom, setAtBottom] = React.useState(true);
       // `desired` keeps what the user actually asked for, so a sidebar closing
       // can widen the window back instead of leaving it permanently shrunk.
       const desired = React.useRef(null);
@@ -1315,12 +1320,28 @@ window.__ModuleLoader__.load({
         [available, sessionId],
       );
 
+      // Wheel scrolling always wins: only follow the stream while the view is
+      // already at the bottom, so reading older text never gets yanked down.
       React.useLayoutEffect(() => {
         const element = body.current;
         if (element === null) return;
+        if (!atBottom) return;
+        element.scrollTop = element.scrollHeight;
+      }, [displayed, collapsed, view, atBottom]);
+
+      const handleBodyScroll = () => {
+        const element = body.current;
+        if (element === null) return;
         const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
-        if (distance < 48) element.scrollTop = element.scrollHeight;
-      }, [displayed, collapsed, view]);
+        setAtBottom(distance < 48);
+      };
+
+      const jumpToBottom = () => {
+        const element = body.current;
+        if (element === null) return;
+        element.scrollTop = element.scrollHeight;
+        setAtBottom(true);
+      };
 
       React.useEffect(() => {
         const handle = () => {
@@ -1973,12 +1994,26 @@ window.__ModuleLoader__.load({
           {
             className: 'dsh-cot-peek__body',
             ref: body,
+            onScroll: handleBodyScroll,
             'data-view': showTranslated ? 'translated' : 'original',
             role: 'log',
             'aria-live': running ? 'polite' : 'off',
           },
           content,
         ),
+        !atBottom && !collapsed
+          ? h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsh-cot-peek__toBottom',
+                title: t('scrollBottom'),
+                'aria-label': t('scrollBottom'),
+                onClick: jumpToBottom,
+              },
+              '↓',
+            )
+          : null,
         h('div', { className: 'dsh-cot-peek__resize', 'aria-hidden': 'true', ...resizeHandlers }),
         settingsPanel,
         edgeArrow,
@@ -2027,6 +2062,8 @@ window.__ModuleLoader__.load({
       '.dsh-cot-peek__body{flex:1;min-height:0;overflow-y:auto;padding:0 12px 12px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:1.6}',
       '.dsh-cot-peek__body[data-view="original"]{opacity:.82}',
       '.dsh-cot-peek__resize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;touch-action:none}',
+      '.dsh-cot-peek__toBottom{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);z-index:4;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:.5px solid var(--dsw-alias-border-l2);border-radius:50%;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-brand-primary);font-size:14px;line-height:1;cursor:pointer;padding:0;box-shadow:0 2px 10px rgba(0,0,0,.28);backdrop-filter:blur(8px)}',
+      '.dsh-cot-peek__toBottom:hover,.dsh-cot-peek__toBottom:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.16));outline:none}',
       '.dsh-cot-peek__resize::after{content:"";position:absolute;right:3px;bottom:3px;width:7px;height:7px;border-right:2px solid var(--dsw-alias-label-secondary);border-bottom:2px solid var(--dsw-alias-label-secondary);opacity:.45;border-bottom-right-radius:2px}',
       '@keyframes dsh-cot-peek-pulse{0%,100%{opacity:1}50%{opacity:.25}}',
       '@media (prefers-reduced-motion:reduce){.dsh-cot-peek__pulse{animation:none}}',
