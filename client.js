@@ -49,6 +49,7 @@ window.__ModuleLoader__.load({
       smoothFast: 'Fast',
       scrollBottom: 'Back to bottom',
       followingPaused: 'Follow paused — scroll up to read',
+      accumulate: 'Accumulate every step of the turn',
       fetchModels: 'Fetch models',
       testConnection: 'Test connection',
       modelsFound: 'Models found:',
@@ -109,6 +110,7 @@ window.__ModuleLoader__.load({
       smoothFast: '快',
       scrollBottom: '回到底部',
       followingPaused: '已暂停跟随，可自由回看',
+      accumulate: '累积整轮思考（跨工具步骤）',
       fetchModels: '拉取模型列表',
       testConnection: '测试连接',
       modelsFound: '找到模型：',
@@ -370,9 +372,8 @@ window.__ModuleLoader__.load({
       return null;
     }
 
-    function selectReasoningText(snapshot) {
-      const node = latestAssistantNode(snapshot);
-      const blocks = node === null || node.data === undefined ? undefined : node.data.blocks;
+    function reasoningOfNode(node) {
+      const blocks = node === null || node === undefined || node.data === undefined ? undefined : node.data.blocks;
       if (!Array.isArray(blocks)) return '';
       let text = '';
       for (const block of blocks) {
@@ -387,6 +388,34 @@ window.__ModuleLoader__.load({
         }
       }
       return text;
+    }
+
+    const MAX_ACCUMULATED_CHARS = 20000;
+
+    function selectReasoningText(snapshot) {
+      const latest = latestAssistantNode(snapshot);
+      if (latest === null) return '';
+      if (readAccumulate() !== true) return reasoningOfNode(latest);
+      // A turn can be thinking -> tool -> thinking -> ...; showing only the last
+      // step makes earlier thinking vanish mid-read. Accumulate every step that
+      // belongs to the same turn (data.turn), in order.
+      const order = snapshot === undefined || snapshot === null ? undefined : snapshot.order;
+      const nodes = snapshot === undefined || snapshot === null ? undefined : snapshot.nodes;
+      const turn = latest.data === undefined || latest.data === null ? undefined : latest.data.turn;
+      if (!Array.isArray(order) || nodes === undefined || nodes === null || typeof nodes.get !== 'function' || turn === undefined || turn === null) {
+        return reasoningOfNode(latest);
+      }
+      const parts = [];
+      for (const id of order) {
+        const node = nodes.get(id);
+        if (node === undefined || node === null || node.kind !== 'assistant-step') continue;
+        if (node.data === undefined || node.data === null || node.data.turn !== turn) continue;
+        const text = reasoningOfNode(node);
+        if (text !== '') parts.push(text);
+      }
+      if (parts.length === 0) return reasoningOfNode(latest);
+      const joined = parts.join('\n\n');
+      return joined.length > MAX_ACCUMULATED_CHARS ? joined.slice(-MAX_ACCUMULATED_CHARS) : joined;
     }
 
     function selectReasoningRunning(snapshot) {
@@ -1081,7 +1110,8 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------------
     const SMOOTH_KEY = 'dsh-cot-peek:smooth';
     const SMOOTH_RATE_KEY = 'dsh-cot-peek:smoothRate';
-    const SMOOTH_RATES = [60, 110, 200];
+    const SMOOTH_RATES = [40, 80, 160];
+    const ACCUMULATE_KEY = 'dsh-cot-peek:accumulate';
 
     function readSmoothEnabled() {
       try {
@@ -1103,7 +1133,7 @@ window.__ModuleLoader__.load({
     function readSmoothRate() {
       try {
         const value = Number(window.localStorage.getItem(SMOOTH_RATE_KEY));
-        return SMOOTH_RATES.includes(value) ? value : 110;
+        return SMOOTH_RATES.includes(value) ? value : 40;
       } catch (error) {
         return 110;
       }
@@ -1112,6 +1142,23 @@ window.__ModuleLoader__.load({
     function writeSmoothRate(rate) {
       try {
         window.localStorage.setItem(SMOOTH_RATE_KEY, String(rate));
+      } catch (error) {
+        /* storage may be unavailable */
+      }
+    }
+
+    function readAccumulate() {
+      try {
+        const raw = window.localStorage.getItem(ACCUMULATE_KEY);
+        return raw === null ? true : raw !== 'off';
+      } catch (error) {
+        return true;
+      }
+    }
+
+    function writeAccumulate(enabled) {
+      try {
+        window.localStorage.setItem(ACCUMULATE_KEY, enabled ? 'on' : 'off');
       } catch (error) {
         /* storage may be unavailable */
       }
@@ -1153,6 +1200,7 @@ window.__ModuleLoader__.load({
       const [oaBusy, setOaBusy] = React.useState(false);
       const [smooth, setSmooth] = React.useState(readSmoothEnabled);
       const [rate, setRate] = React.useState(readSmoothRate);
+      const [accumulate, setAccumulate] = React.useState(readAccumulate);
       const [revealed, setRevealed] = React.useState(0);
       const [atBottom, setAtBottom] = React.useState(true);
       // `desired` keeps what the user actually asked for, so a sidebar closing
@@ -1918,6 +1966,20 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
+            h(
+              'label',
+              { className: 'dsh-cot-peek__settings-row' },
+              h('input', {
+                type: 'checkbox',
+                checked: accumulate,
+                onChange: (event) => {
+                  const next = event.target.checked;
+                  setAccumulate(next);
+                  writeAccumulate(next);
+                },
+              }),
+              h('span', { className: 'dsh-cot-peek__settings-note' }, t('accumulate')),
+            ),
             h('div', { className: 'dsh-cot-peek__settings-note' }, t('oaNote')),
             h(
               'div',
@@ -2103,6 +2165,7 @@ window.__ModuleLoader__.load({
       const [probe, setProbe] = React.useState('');
       const [smooth, setSmooth] = React.useState(readSmoothEnabled);
       const [rate, setRate] = React.useState(readSmoothRate);
+      const [accumulate, setAccumulate] = React.useState(readAccumulate);
       const [busy, setBusy] = React.useState(false);
 
       const refresh = () => {
@@ -2330,6 +2393,20 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
+        ),
+        h(
+          'div',
+          { className: 'dsh-cot-peek-settings__row' },
+          h('input', {
+            type: 'checkbox',
+            checked: accumulate,
+            onChange: (event) => {
+              const next = event.target.checked;
+              setAccumulate(next);
+              writeAccumulate(next);
+            },
+          }),
+          h('span', { className: 'dsh-cot-peek-settings__label' }, t('accumulate')),
         ),
         h(
           'div',
