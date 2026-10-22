@@ -42,6 +42,11 @@ window.__ModuleLoader__.load({
       oaClear: 'Use official',
       oaNote: 'Stored in local storage. Code, URLs and terms stay shielded before sending.',
       oaBadge: 'OA',
+      smooth: 'Smooth reveal',
+      smoothRate: 'Reveal speed',
+      smoothSlow: 'Slow',
+      smoothMid: 'Normal',
+      smoothFast: 'Fast',
       fetchModels: 'Fetch models',
       testConnection: 'Test connection',
       modelsFound: 'Models found:',
@@ -95,6 +100,11 @@ window.__ModuleLoader__.load({
       oaClear: '改用官方',
       oaNote: '存在本地浏览器。发送前会先对代码、URL 和术语做占位保护。',
       oaBadge: '本地',
+      smooth: '平滑显示',
+      smoothRate: '显示速度',
+      smoothSlow: '慢',
+      smoothMid: '正常',
+      smoothFast: '快',
       fetchModels: '拉取模型列表',
       testConnection: '测试连接',
       modelsFound: '找到模型：',
@@ -1059,6 +1069,57 @@ window.__ModuleLoader__.load({
       return line.length > 72 ? line.slice(0, 72) + '…' : line;
     }
 
+    // ------------------------------------------------------------------
+    // Smooth reveal: the snapshot arrives in bursts (sometimes thousands of
+    // characters in a second), which is unreadable. Reveal the text at a
+    // reading pace instead of jumping, and only stick to the bottom when the
+    // user has not scrolled up.
+    // ------------------------------------------------------------------
+    const SMOOTH_KEY = 'dsh-cot-peek:smooth';
+    const SMOOTH_RATE_KEY = 'dsh-cot-peek:smoothRate';
+    const SMOOTH_RATES = [60, 110, 200];
+
+    function readSmoothEnabled() {
+      try {
+        const raw = window.localStorage.getItem(SMOOTH_KEY);
+        return raw === null ? true : raw !== 'off';
+      } catch (error) {
+        return true;
+      }
+    }
+
+    function writeSmoothEnabled(enabled) {
+      try {
+        window.localStorage.setItem(SMOOTH_KEY, enabled ? 'on' : 'off');
+      } catch (error) {
+        /* storage may be unavailable */
+      }
+    }
+
+    function readSmoothRate() {
+      try {
+        const value = Number(window.localStorage.getItem(SMOOTH_RATE_KEY));
+        return SMOOTH_RATES.includes(value) ? value : 110;
+      } catch (error) {
+        return 110;
+      }
+    }
+
+    function writeSmoothRate(rate) {
+      try {
+        window.localStorage.setItem(SMOOTH_RATE_KEY, String(rate));
+      } catch (error) {
+        /* storage may be unavailable */
+      }
+    }
+
+    /** How many characters to show after `elapsed` seconds at `rate` chars/s. */
+    function nextRevealCount(shownLength, targetLength, elapsedSeconds, rate) {
+      if (!(targetLength > shownLength)) return targetLength;
+      const step = Math.max(1, Math.round(rate * Math.max(0, elapsedSeconds)));
+      return Math.min(targetLength, shownLength + step);
+    }
+
     function PeekWindow(props) {
       const { t, service } = props;
       const state = React.useSyncExternalStore(bridge.subscribe, bridge.get);
@@ -1086,6 +1147,9 @@ window.__ModuleLoader__.load({
       const [oaModels, setOaModels] = React.useState([]);
       const [oaProbe, setOaProbe] = React.useState('');
       const [oaBusy, setOaBusy] = React.useState(false);
+      const [smooth, setSmooth] = React.useState(readSmoothEnabled);
+      const [rate, setRate] = React.useState(readSmoothRate);
+      const [revealed, setRevealed] = React.useState(0);
       // `desired` keeps what the user actually asked for, so a sidebar closing
       // can widen the window back instead of leaving it permanently shrunk.
       const desired = React.useRef(null);
@@ -1253,8 +1317,10 @@ window.__ModuleLoader__.load({
 
       React.useLayoutEffect(() => {
         const element = body.current;
-        if (element !== null) element.scrollTop = element.scrollHeight;
-      }, [translation.output, translation.tail, reasoning, collapsed]);
+        if (element === null) return;
+        const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
+        if (distance < 48) element.scrollTop = element.scrollHeight;
+      }, [displayed, collapsed, view]);
 
       React.useEffect(() => {
         const handle = () => {
@@ -1386,18 +1452,50 @@ window.__ModuleLoader__.load({
         saveRect(desired.current);
       };
 
-      if (sessionId === null) return null;
-
       const original = typeof reasoning === 'string' ? reasoning : '';
       const hasTranslation = translation.output !== '' || translation.tail !== '';
       const showTranslated = hasTranslation && view === 'translated';
       const shown = showTranslated ? translation.output + translation.tail : original;
+      const visibleCount = smooth ? Math.min(revealed, shown.length) : shown.length;
+      const displayed = shown.slice(0, Math.max(0, visibleCount));
+
+      React.useEffect(() => {
+        if (!smooth) {
+          setRevealed(shown.length);
+          return undefined;
+        }
+        let raf = null;
+        let last = 0;
+        const tick = (now) => {
+          raf = null;
+          const delta = last === 0 ? 1 / 60 : Math.min(0.25, (now - last) / 1000);
+          last = now;
+          let reached = true;
+          setRevealed((current) => {
+            const target = shown.length;
+            if (!(target > current)) {
+              reached = true;
+              return target;
+            }
+            reached = false;
+            const speed = running ? rate : rate * 5;
+            return nextRevealCount(current, target, delta, speed);
+          });
+          if (!reached) raf = window.requestAnimationFrame(tick);
+        };
+        raf = window.requestAnimationFrame(tick);
+        return () => {
+          if (raf !== null) window.cancelAnimationFrame(raf);
+        };
+      }, [smooth, shown, running, rate]);
+
+      if (sessionId === null) return null;
       const content =
-        shown.trim() === ''
+        displayed.trim() === ''
           ? translatedText !== '' && translation.pending
             ? t('translating')
             : t('idle')
-          : shown;
+          : displayed;
       const summarySource = showTranslated
         ? translation.output !== ''
           ? translation.output
@@ -1765,6 +1863,40 @@ window.__ModuleLoader__.load({
               ),
             ),
             oaProbe !== '' ? h('div', { className: 'dsh-cot-peek__settings-note' }, oaProbe) : null,
+            h(
+              'label',
+              { className: 'dsh-cot-peek__settings-row' },
+              h('input', {
+                type: 'checkbox',
+                checked: smooth,
+                onChange: (event) => {
+                  const next = event.target.checked;
+                  setSmooth(next);
+                  writeSmoothEnabled(next);
+                },
+              }),
+              h('span', { className: 'dsh-cot-peek__settings-note' }, t('smooth')),
+              h(
+                'select',
+                {
+                  className: 'dsh-cot-peek__input dsh-cot-peek__select',
+                  value: rate,
+                  disabled: !smooth,
+                  onChange: (event) => {
+                    const next = Number(event.target.value);
+                    setRate(next);
+                    writeSmoothRate(next);
+                  },
+                },
+                SMOOTH_RATES.map((value) =>
+                  h(
+                    'option',
+                    { key: value, value },
+                    value === 60 ? t('smoothSlow') : value === 110 ? t('smoothMid') : t('smoothFast'),
+                  ),
+                ),
+              ),
+            ),
             h('div', { className: 'dsh-cot-peek__settings-note' }, t('oaNote')),
             h(
               'div',
@@ -1889,6 +2021,8 @@ window.__ModuleLoader__.load({
       '.dsh-cot-peek__input{flex:1;min-width:0;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 8px;outline:none}',
       '.dsh-cot-peek__input:focus{border-color:var(--dsw-alias-brand-primary)}',
       '.dsh-cot-peek__settings-note{font-size:10.5px;line-height:1.5;color:var(--dsw-alias-label-secondary);opacity:.8}',
+      '.dsh-cot-peek__select{flex:0 0 96px;text-align:center}',
+      '.dsh-cot-peek-settings__row{display:flex;align-items:center;gap:8px}',
       '.dsh-cot-peek__settings-actions{display:flex;gap:8px;margin-top:auto;justify-content:flex-end}',
       '.dsh-cot-peek__body{flex:1;min-height:0;overflow-y:auto;padding:0 12px 12px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:1.6}',
       '.dsh-cot-peek__body[data-view="original"]{opacity:.82}',
@@ -1930,6 +2064,8 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = React.useState('');
       const [models, setModels] = React.useState([]);
       const [probe, setProbe] = React.useState('');
+      const [smooth, setSmooth] = React.useState(readSmoothEnabled);
+      const [rate, setRate] = React.useState(readSmoothRate);
       const [busy, setBusy] = React.useState(false);
 
       const refresh = () => {
@@ -2124,6 +2260,40 @@ window.__ModuleLoader__.load({
               ),
             )
           : null,
+        h(
+          'div',
+          { className: 'dsh-cot-peek-settings__row' },
+          h('input', {
+            type: 'checkbox',
+            checked: smooth,
+            onChange: (event) => {
+              const next = event.target.checked;
+              setSmooth(next);
+              writeSmoothEnabled(next);
+            },
+          }),
+          h('span', { className: 'dsh-cot-peek-settings__label' }, t('smooth')),
+          h(
+            'select',
+            {
+              className: 'dsh-cot-peek__input dsh-cot-peek__select',
+              value: rate,
+              disabled: !smooth,
+              onChange: (event) => {
+                const next = Number(event.target.value);
+                setRate(next);
+                writeSmoothRate(next);
+              },
+            },
+            SMOOTH_RATES.map((value) =>
+              h(
+                'option',
+                { key: value, value },
+                value === 60 ? t('smoothSlow') : value === 110 ? t('smoothMid') : t('smoothFast'),
+              ),
+            ),
+          ),
+        ),
         h(
           'div',
           { className: 'dsh-cot-peek-settings__actions' },
