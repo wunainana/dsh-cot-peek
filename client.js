@@ -1368,15 +1368,6 @@ window.__ModuleLoader__.load({
         [available, sessionId],
       );
 
-      // Wheel scrolling always wins: only follow the stream while the view is
-      // already at the bottom, so reading older text never gets yanked down.
-      React.useLayoutEffect(() => {
-        const element = body.current;
-        if (element === null) return;
-        if (!atBottom) return;
-        element.scrollTop = element.scrollHeight;
-      }, [displayed, collapsed, view, atBottom]);
-
       const handleBodyScroll = () => {
         const element = body.current;
         if (element === null) return;
@@ -1557,6 +1548,15 @@ window.__ModuleLoader__.load({
           if (raf !== null) window.cancelAnimationFrame(raf);
         };
       }, [smooth, shown, running, rate]);
+
+      // Wheel scrolling always wins: only follow the stream while the view is
+      // already at the bottom, so reading older text never gets yanked down.
+      React.useLayoutEffect(() => {
+        const element = body.current;
+        if (element === null) return;
+        if (!atBottom) return;
+        element.scrollTop = element.scrollHeight;
+      }, [displayed, collapsed, view, atBottom]);
 
       if (sessionId === null) return null;
       const content =
