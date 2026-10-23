@@ -1658,7 +1658,21 @@ window.__ModuleLoader__.load({
 
       const openSettings = () => {
         setOaDraft(readOA() ?? { baseUrl: '', model: '', apiKey: '' });
-        setSettingsOpen((previous) => !previous);
+        setSettingsOpen((previous) => {
+          const next = !previous;
+          if (next) {
+            // The panel needs ~420px; a window the user shrank would otherwise
+            // render the lower controls outside its background.
+            const current = rectRef.current;
+            const needed = Math.min(460, Math.max(360, window.innerHeight - 80));
+            if (current.h < needed) {
+              desired.current = { ...desired.current, h: needed };
+              setRect(normalizeRect(desired.current, boundsRef.current));
+              saveRect(desired.current);
+            }
+          }
+          return next;
+        });
       };
 
       const saveEndpoint = () => {
@@ -2112,7 +2126,10 @@ window.__ModuleLoader__.load({
       '.dsh-cot-peek__toggle[data-active="true"]{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}',
       '.dsh-cot-peek__toggle[disabled]{opacity:.55;cursor:default}',
       '.dsh-cot-peek__badge{flex:none;font-size:10px;line-height:16px;padding:0 6px;border-radius:8px;color:var(--dsw-alias-brand-primary);border:.5px solid var(--dsw-alias-brand-primary);opacity:.85}',
-      '.dsh-cot-peek__settings{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:inherit;background:var(--dsw-alias-bg-overlay);backdrop-filter:blur(14px)}',
+      '.dsh-cot-peek__settings{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:inherit;background:var(--dsw-alias-bg-overlay);backdrop-filter:blur(14px);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}',
+      '.dsh-cot-peek__settings::-webkit-scrollbar{width:6px}',
+      '.dsh-cot-peek__settings::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l2);border-radius:3px}',
+      '.dsh-cot-peek__settings-actions{position:sticky;bottom:-14px;margin-top:auto;padding:8px 0 0;background:var(--dsw-alias-bg-overlay);}',
       '.dsh-cot-peek__settings-title{font-size:12px;color:var(--dsw-alias-label-secondary);letter-spacing:.04em}',
       '.dsh-cot-peek__settings-row{display:flex;gap:8px}',
       '.dsh-cot-peek__input{flex:1;min-width:0;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 8px;outline:none}',
