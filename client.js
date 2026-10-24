@@ -271,11 +271,23 @@ window.__ModuleLoader__.load({
         this.failed = false;
         this.disposed = false;
         this.controller = new AbortController();
+        this.seen = '';
         this.publish();
       }
 
       update(text) {
         if (this.disposed) return;
+        if (!text.startsWith(this.seen)) {
+          // The source jumped instead of growing (switch of turn/step, or a
+          // rewritten step). Staying on the old prefix would make every later
+          // pass look "already translated" and the window would freeze.
+          this.sourceDone = '';
+          this.output = '';
+          this.tail = '';
+          this.queue = [];
+          this.failed = false;
+        }
+        this.seen = text;
         const cut = completedPrefix(text);
         this.tail = text.slice(cut);
         if (cut > 0) {
@@ -294,6 +306,7 @@ window.__ModuleLoader__.load({
       // right now, including the unfinished tail, on an explicit button press.
       translateAll(text) {
         if (this.disposed) return;
+        this.seen = text;
         this.output = '';
         this.tail = '';
         this.sourceDone = text;
@@ -1215,6 +1228,7 @@ window.__ModuleLoader__.load({
       const engine = React.useRef(null);
       const autoState = React.useRef({ auto: true, available: false, sessionId: null, reasoning: '' });
       const autoDone = React.useRef(0);
+      const autoPrev = React.useRef('');
       const body = React.useRef(null);
       const drag = React.useRef(null);
       const resize = React.useRef(null);
@@ -1329,6 +1343,17 @@ window.__ModuleLoader__.load({
           const current = autoState.current;
           if (!current.auto || !current.available || current.sessionId === null) return;
           const text = current.reasoning;
+          if (text === autoPrev.current) return;
+          if (!text.startsWith(autoPrev.current)) {
+            // New turn / different stream: a length-based watermark would sit
+            // above the new text and silently skip it. Start a fresh engine.
+            if (engine.current !== null) {
+              engine.current.dispose();
+              engine.current = null;
+            }
+            autoDone.current = 0;
+          }
+          autoPrev.current = text;
           if (text.length <= autoDone.current) return;
           autoDone.current = text.length;
           if (engine.current === null) {
@@ -1349,6 +1374,7 @@ window.__ModuleLoader__.load({
         // Never machine-translate the history that loads with a conversation:
         // only text that arrives from now on counts as new.
         autoDone.current = typeof reasoning === 'string' ? reasoning.length : 0;
+        autoPrev.current = typeof reasoning === 'string' ? reasoning : '';
         if (firstSession.current) {
           firstSession.current = false;
           return;
@@ -1516,7 +1542,9 @@ window.__ModuleLoader__.load({
       const hasTranslation = translation.output !== '' || translation.tail !== '';
       const showTranslated = hasTranslation && view === 'translated';
       const shown = showTranslated ? translation.output + translation.tail : original;
-      const visibleCount = smooth ? Math.min(revealed, shown.length) : shown.length;
+      // Pacing helps original text (it arrives in bursts), but pacing the
+      // translation again just reads as "translation is slow".
+      const visibleCount = smooth && !showTranslated ? Math.min(revealed, shown.length) : shown.length;
       const displayed = shown.slice(0, Math.max(0, visibleCount));
 
       React.useEffect(() => {
