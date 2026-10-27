@@ -48,6 +48,16 @@
       },
       "versions": [
         {
+          "version": "0.5.1",
+          "publishTimestamp": 1793070438,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.0"
+          }
+        },
+        {
           "version": "0.5.0",
           "publishTimestamp": 1793070290,
           "source": {

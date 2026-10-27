@@ -1215,6 +1215,16 @@ window.__ModuleLoader__.load({
       return Math.min(targetLength, shownLength + step);
     }
 
+    // Reading speed should smooth the scroll, not turn into lag: once the
+    // stream is this far ahead, reveal faster until it has caught up again.
+    const REVEAL_CATCHUP_CHARS = 240;
+
+    /** Chars per second used to reveal the current backlog. */
+    function revealSpeed(rate, running, backlog) {
+      if (!running) return rate * 5;
+      return backlog > REVEAL_CATCHUP_CHARS ? rate * 4 : rate;
+    }
+
     function PeekWindow(props) {
       const { t, service } = props;
       const state = React.useSyncExternalStore(bridge.subscribe, bridge.get);
@@ -1605,7 +1615,7 @@ window.__ModuleLoader__.load({
               return target;
             }
             reached = false;
-            const speed = running ? rate : rate * 5;
+            const speed = revealSpeed(rate, running, target - current);
             return nextRevealCount(current, target, delta, speed);
           });
           if (!reached) raf = window.requestAnimationFrame(tick);
