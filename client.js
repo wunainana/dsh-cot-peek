@@ -989,6 +989,27 @@ window.__ModuleLoader__.load({
       return Math.max(low, Math.min(value, high));
     }
 
+    // The Windows desktop shell paints a native window-drag strip across the top
+    // of the frame (the caption row). A floating window that overlaps it moves
+    // the whole app when grabbed instead of itself, so keep the peek below it.
+    // The shell publishes the strip height and clears it again in fullscreen.
+    function chromeTopInset() {
+      const root = typeof document === 'undefined' ? null : document.documentElement;
+      if (root === null || root === undefined || typeof root.hasAttribute !== 'function') return 0;
+      if (!root.hasAttribute('data-windows-titlebar')) return 0;
+      if (root.hasAttribute('data-fullscreen')) return 0;
+      const raw =
+        root.style !== undefined && typeof root.style.getPropertyValue === 'function'
+          ? Number.parseFloat(root.style.getPropertyValue('--dsh-windows-titlebar-height'))
+          : Number.NaN;
+      return Number.isFinite(raw) && raw > 0 ? raw : 40;
+    }
+
+    /** Smallest top offset that keeps the window clear of the app caption. */
+    function minimumTop() {
+      return Math.max(8, Math.round(chromeTopInset()) + 8);
+    }
+
     // Horizontal area the window is allowed to occupy: the conversation column
     // when it has been measured, the whole viewport otherwise.
     function horizontalArea(bounds) {
@@ -1010,7 +1031,8 @@ window.__ModuleLoader__.load({
       const height = clamp(Number(rect.h) || 260, MIN_HEIGHT, maxHeight);
       const maxX = Math.max(area.left, area.right - width);
       const x = clamp(Number(rect.x) || area.left, area.left, maxX);
-      const y = clamp(Number(rect.y) || 92, 8, Math.max(8, viewportHeight - height - 8));
+      const top = minimumTop();
+      const y = clamp(Number(rect.y) || 92, top, Math.max(top, viewportHeight - height - 8));
       return { x, y, w: width, h: height };
     }
 
@@ -1124,7 +1146,16 @@ window.__ModuleLoader__.load({
     const SMOOTH_KEY = 'dsh-cot-peek:smooth';
     const SMOOTH_RATE_KEY = 'dsh-cot-peek:smoothRate';
     const SMOOTH_RATES = [40, 80, 160];
+    // Labels are keyed by position, not by value: the rate list changed from
+    // 60/110/160 to 40/80/160 and the old value comparisons left every option
+    // reading "Fast", so nobody could pick a slower reveal.
+    const SMOOTH_RATE_LABEL_KEYS = ['smoothSlow', 'smoothMid', 'smoothFast'];
     const ACCUMULATE_KEY = 'dsh-cot-peek:accumulate';
+
+    function smoothRateLabel(value) {
+      const index = SMOOTH_RATES.indexOf(Number(value));
+      return SMOOTH_RATE_LABEL_KEYS[index < 0 ? SMOOTH_RATE_LABEL_KEYS.length - 1 : index];
+    }
 
     function readSmoothEnabled() {
       try {
@@ -1148,7 +1179,7 @@ window.__ModuleLoader__.load({
         const value = Number(window.localStorage.getItem(SMOOTH_RATE_KEY));
         return SMOOTH_RATES.includes(value) ? value : 40;
       } catch (error) {
-        return 110;
+        return 40;
       }
     }
 
@@ -1414,10 +1445,13 @@ window.__ModuleLoader__.load({
             setRect(normalizeRect(desired.current, boundsRef.current));
             return;
           }
-          setRect((previous) => ({
-            ...previous,
-            y: clamp(previous.y, 8, Math.max(8, window.innerHeight - 48)),
-          }));
+          setRect((previous) => {
+            const top = minimumTop();
+            return {
+              ...previous,
+              y: clamp(previous.y, top, Math.max(top, window.innerHeight - 48)),
+            };
+          });
         };
         window.addEventListener('resize', handle);
         return () => window.removeEventListener('resize', handle);
@@ -1457,6 +1491,7 @@ window.__ModuleLoader__.load({
         const session = drag.current;
         if (session === null || session.pointerId !== event.pointerId) return;
         const width = session.width;
+        const top = minimumTop();
         const x = clamp(
           session.baseX + event.clientX - session.startX,
           0,
@@ -1464,8 +1499,8 @@ window.__ModuleLoader__.load({
         );
         const y = clamp(
           session.baseY + event.clientY - session.startY,
-          8,
-          Math.max(8, window.innerHeight - 48),
+          top,
+          Math.max(top, window.innerHeight - 48),
         );
         desired.current = { ...desired.current, x, y };
         setRect({ x, y, w: width, h: desired.current.h });
@@ -1488,9 +1523,10 @@ window.__ModuleLoader__.load({
         if (side === null) {
           setRect(normalizeRect(desired.current, boundsRef.current));
         } else {
+          const top = minimumTop();
           setRect({
             x: side === 'left' ? 0 : Math.max(0, viewportWidth - current.w),
-            y: clamp(current.y, 8, Math.max(8, window.innerHeight - 48)),
+            y: clamp(current.y, top, Math.max(top, window.innerHeight - 48)),
             w: current.w,
             h: current.h,
           });
@@ -1542,9 +1578,12 @@ window.__ModuleLoader__.load({
       const hasTranslation = translation.output !== '' || translation.tail !== '';
       const showTranslated = hasTranslation && view === 'translated';
       const shown = showTranslated ? translation.output + translation.tail : original;
-      // Pacing helps original text (it arrives in bursts), but pacing the
-      // translation again just reads as "translation is slow".
-      const visibleCount = smooth && !showTranslated ? Math.min(revealed, shown.length) : shown.length;
+      // Pace both views: the translation arrives in 2.5s chunks, and dropping a
+      // whole paragraph in at once is what readers report as "too fast to
+      // follow". Revealing at the configured reading speed keeps the scroll
+      // smooth; the 0.4.9 stall fix is what made translation feel slow, not
+      // pacing.
+      const visibleCount = smooth ? Math.min(revealed, shown.length) : shown.length;
       const displayed = shown.slice(0, Math.max(0, visibleCount));
 
       React.useEffect(() => {
@@ -2003,7 +2042,7 @@ window.__ModuleLoader__.load({
                   h(
                     'option',
                     { key: value, value },
-                    value === 60 ? t('smoothSlow') : value === 110 ? t('smoothMid') : t('smoothFast'),
+                    t(smoothRateLabel(value)),
                   ),
                 ),
               ),
@@ -2130,12 +2169,12 @@ window.__ModuleLoader__.load({
     // events because shell.overlay itself is click-through.
     // ------------------------------------------------------------------
     const CSS = [
-      '.dsh-cot-peek{position:fixed;z-index:900;box-sizing:border-box;display:flex;flex-direction:column;min-width:320px;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-alias-bg-overlay);box-shadow:var(--dsw-elevation-prominent,0 12px 36px rgba(0,0,0,.28));backdrop-filter:blur(12px);color:var(--dsw-alias-label-primary);overflow:visible;pointer-events:auto;font-size:13px;line-height:1.55}',
+      '.dsh-cot-peek{position:fixed;z-index:900;box-sizing:border-box;display:flex;flex-direction:column;min-width:320px;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-alias-bg-overlay);box-shadow:var(--dsw-elevation-prominent,0 12px 36px rgba(0,0,0,.28));backdrop-filter:blur(12px);color:var(--dsw-alias-label-primary);overflow:visible;pointer-events:auto;font-size:13px;line-height:1.55;-webkit-app-region:no-drag}',
       '.dsh-cot-peek[data-collapsed="true"]{min-width:0}',
       '.dsh-cot-peek[data-running="true"]{border-color:var(--dsw-alias-brand-primary)}',
       '.dsh-cot-peek__head{display:flex;align-items:center;gap:8px;min-height:34px;padding:5px 10px;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}',
       '.dsh-cot-peek__head:active{cursor:grabbing}',
-      '.dsh-cot-peek__edge{position:absolute;top:50%;transform:translateY(-50%);width:26px;height:64px;display:flex;align-items:center;justify-content:center;border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-brand-primary);font-size:16px;line-height:1;cursor:pointer;padding:0;box-shadow:0 2px 10px rgba(0,0,0,.25);animation:dsh-cot-peek-breathe 2.6s ease-in-out infinite;pointer-events:auto;backdrop-filter:blur(8px)}',
+      '.dsh-cot-peek__edge{position:absolute;top:50%;transform:translateY(-50%);width:26px;height:64px;display:flex;align-items:center;justify-content:center;border:.5px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-brand-primary);font-size:16px;line-height:1;cursor:pointer;padding:0;box-shadow:0 2px 10px rgba(0,0,0,.25);animation:dsh-cot-peek-breathe 2.6s ease-in-out infinite;pointer-events:auto;backdrop-filter:blur(8px);-webkit-app-region:no-drag}',
       '.dsh-cot-peek__edge:hover,.dsh-cot-peek__edge:focus-visible{color:var(--dsw-alias-brand-primary);animation-play-state:paused;opacity:1}',
       '.dsh-cot-peek__edge:focus-visible{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:-2px}',
       '@keyframes dsh-cot-peek-breathe{0%,100%{opacity:.45}50%{opacity:1}}',
@@ -2434,7 +2473,7 @@ window.__ModuleLoader__.load({
               h(
                 'option',
                 { key: value, value },
-                value === 60 ? t('smoothSlow') : value === 110 ? t('smoothMid') : t('smoothFast'),
+                t(smoothRateLabel(value)),
               ),
             ),
           ),
