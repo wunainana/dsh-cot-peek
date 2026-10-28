@@ -1,6 +1,6 @@
 {
   "name": "dsh-cot-peek",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "思考小窗：贴边深呼吸箭头、思考增量翻译；设置页可选官方 Bing/Google/DeepSeek 或自定义 OpenAI 兼容端点，支持拉取模型列表与连接测试，本地端点走宿时代理绕过 CORS。",
   "type": "module",
   "main": "index.js",

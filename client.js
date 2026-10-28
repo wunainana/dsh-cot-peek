@@ -1091,6 +1091,73 @@ window.__ModuleLoader__.load({
       };
     }
 
+    /**
+     * Browsable model list used by both settings surfaces. A native <select>
+     * popup ignored our theme (light-grey text on a light-grey list), so the
+     * fetched models are rendered as ordinary buttons that follow the tokens.
+     */
+    function modelPickerNode(t, models, current, open, onToggle, onPick) {
+      if (models.length === 0) return null;
+      return h(
+        'div',
+        { className: 'dsh-cot-peek__picker' },
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'dsh-cot-peek__modelToggle',
+            'aria-expanded': open ? 'true' : 'false',
+            onClick: onToggle,
+          },
+          (current !== '' ? current : t('oaModelPick')) + ' · ' + models.length + ' ▾',
+        ),
+        open
+          ? h(
+              'div',
+              { className: 'dsh-cot-peek__modelList', role: 'listbox', 'aria-label': t('oaModelPick') },
+              models.map((id) =>
+                h(
+                  'button',
+                  {
+                    key: id,
+                    type: 'button',
+                    className: 'dsh-cot-peek__modelItem',
+                    role: 'option',
+                    'aria-selected': current === id ? 'true' : 'false',
+                    'data-selected': current === id ? 'true' : undefined,
+                    onClick: () => onPick(id),
+                  },
+                  id,
+                ),
+              ),
+            )
+          : null,
+      );
+    }
+
+    /** Slow / normal / fast as three buttons instead of a popping <select>. */
+    function rateButtonsNode(t, rate, smooth, onPick) {
+      return h(
+        'span',
+        { className: 'dsh-cot-peek__seg', role: 'group', 'aria-label': t('smoothRate') },
+        SMOOTH_RATES.map((value) =>
+          h(
+            'button',
+            {
+              key: value,
+              type: 'button',
+              className: 'dsh-cot-peek__segBtn',
+              disabled: !smooth,
+              'aria-pressed': rate === value ? 'true' : 'false',
+              'data-selected': rate === value ? 'true' : undefined,
+              onClick: () => onPick(value),
+            },
+            t(smoothRateLabel(value)),
+          ),
+        ),
+      );
+    }
+
     function readCollapsed() {
       try {
         return window.localStorage.getItem(COLLAPSE_KEY) === '1';
@@ -1274,6 +1341,7 @@ window.__ModuleLoader__.load({
       const [auto, setAuto] = React.useState(readAuto);
       const [notice, setNotice] = React.useState('');
       const [settingsOpen, setSettingsOpen] = React.useState(false);
+      const [modelMenuOpen, setModelMenuOpen] = React.useState(false);
       const [oaDraft, setOaDraft] = React.useState(
         () => readOA() ?? { baseUrl: '', model: '', apiKey: '' },
       );
@@ -2070,21 +2138,16 @@ window.__ModuleLoader__.load({
               }),
             ),
             oaModels.length > 0
-              ? h(
-                  'select',
-                  {
-                    className: 'dsh-cot-peek__input dsh-cot-peek__select',
-                    'aria-label': t('oaModelPick'),
-                    value: oaModels.includes(oaDraft.model) ? oaDraft.model : '',
-                    onChange: (event) => {
-                      if (event.target.value === '') return;
-                      pickWindowModel(event.target.value);
-                    },
+              ? modelPickerNode(
+                  t,
+                  oaModels,
+                  oaDraft.model,
+                  modelMenuOpen,
+                  () => setModelMenuOpen(!modelMenuOpen),
+                  (id) => {
+                    pickWindowModel(id);
+                    setModelMenuOpen(false);
                   },
-                  [
-                    h('option', { key: '__pick__', value: '' }, t('oaModelPick')),
-                    ...oaModels.map((id) => h('option', { key: id, value: id }, id)),
-                  ],
                 )
               : null,
             h('datalist', { id: 'dsh-cot-peek-window-models' }, oaModels.map((id) => h('option', { key: id, value: id }))),
@@ -2104,38 +2167,26 @@ window.__ModuleLoader__.load({
             ),
             oaProbe !== '' ? h('div', { className: 'dsh-cot-peek__settings-note' }, oaProbe) : null,
             h(
-              'label',
+              'div',
               { className: 'dsh-cot-peek__settings-row' },
-              h('input', {
-                type: 'checkbox',
-                checked: smooth,
-                onChange: (event) => {
-                  const next = event.target.checked;
-                  setSmooth(next);
-                  writeSmoothEnabled(next);
-                },
-              }),
-              h('span', { className: 'dsh-cot-peek__settings-note' }, t('smooth')),
               h(
-                'select',
-                {
-                  className: 'dsh-cot-peek__input dsh-cot-peek__select',
-                  value: rate,
-                  disabled: !smooth,
+                'label',
+                { className: 'dsh-cot-peek__checkLabel' },
+                h('input', {
+                  type: 'checkbox',
+                  checked: smooth,
                   onChange: (event) => {
-                    const next = Number(event.target.value);
-                    setRate(next);
-                    writeSmoothRate(next);
+                    const next = event.target.checked;
+                    setSmooth(next);
+                    writeSmoothEnabled(next);
                   },
-                },
-                SMOOTH_RATES.map((value) =>
-                  h(
-                    'option',
-                    { key: value, value },
-                    t(smoothRateLabel(value)),
-                  ),
-                ),
+                }),
+                h('span', { className: 'dsh-cot-peek__settings-note' }, t('smooth')),
               ),
+              rateButtonsNode(t, rate, smooth, (value) => {
+                setRate(value);
+                writeSmoothRate(value);
+              }),
             ),
             h(
               'label',
@@ -2291,8 +2342,23 @@ window.__ModuleLoader__.load({
       '.dsh-cot-peek__settings-row{display:flex;gap:8px}',
       '.dsh-cot-peek__input{flex:1;min-width:0;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 8px;outline:none}',
       '.dsh-cot-peek__input:focus{border-color:var(--dsw-alias-brand-primary)}',
-      '.dsh-cot-peek__settings-note{font-size:10.5px;line-height:1.5;color:var(--dsw-alias-label-secondary);opacity:.8}',
-      '.dsh-cot-peek__select{flex:0 0 96px;text-align:center}',
+      '.dsh-cot-peek__settings-note{font-size:10.5px;line-height:1.5;color:var(--dsw-alias-label-secondary);opacity:.95}',
+      '.dsh-cot-peek__checkLabel{display:flex;align-items:center;gap:8px;cursor:pointer}',
+      '.dsh-cot-peek__picker{display:flex;flex-direction:column;gap:6px}',
+      '.dsh-cot-peek__modelToggle{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 8px;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-cot-peek__modelToggle:hover,.dsh-cot-peek__modelToggle:focus-visible{border-color:var(--dsw-alias-brand-primary)}',
+      '.dsh-cot-peek__modelToggle:focus-visible{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+      '.dsh-cot-peek__modelList{display:flex;flex-direction:column;gap:2px;max-height:156px;overflow-y:auto;border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-overlay));padding:4px}',
+      '.dsh-cot-peek__modelList::-webkit-scrollbar{width:6px}',
+      '.dsh-cot-peek__modelList::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l2);border-radius:3px}',
+      '.dsh-cot-peek__modelItem{display:block;width:100%;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11.5px;line-height:1.5;padding:4px 6px;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dsh-cot-peek__modelItem:hover,.dsh-cot-peek__modelItem:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.16));outline:none}',
+      '.dsh-cot-peek__modelItem[data-selected="true"]{color:var(--dsw-alias-brand-primary)}',
+      '.dsh-cot-peek__seg{display:flex;gap:2px;margin-left:auto}',
+      '.dsh-cot-peek__segBtn{border:.5px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:18px;padding:2px 10px;border-radius:6px;cursor:pointer}',
+      '.dsh-cot-peek__segBtn:hover,.dsh-cot-peek__segBtn:focus-visible{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary)}',
+      '.dsh-cot-peek__segBtn[data-selected="true"]{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}',
+      '.dsh-cot-peek__segBtn[disabled]{opacity:.55;cursor:default}',
       '.dsh-cot-peek-settings__row{display:flex;align-items:center;gap:8px}',
       '.dsh-cot-peek__settings-actions{display:flex;gap:8px;margin-top:auto;justify-content:flex-end}',
       '.dsh-cot-peek__body{flex:1;min-height:0;overflow-y:auto;padding:0 12px 12px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:1.6}',
@@ -2306,17 +2372,17 @@ window.__ModuleLoader__.load({
       '@media (prefers-reduced-motion:reduce){.dsh-cot-peek__edge{animation:none;opacity:1}}',
       '.dsh-cot-peek-settings{display:flex;flex-direction:column;gap:10px;padding:4px 2px;font-size:13px;line-height:1.55}',
       '.dsh-cot-peek-settings__title{font-size:14px;font-weight:600}',
-      '.dsh-cot-peek-settings__desc{font-size:12px;opacity:.75}',
+      '.dsh-cot-peek-settings__desc{font-size:12px;opacity:.85}',
       '.dsh-cot-peek-settings__engines{display:flex;flex-direction:column;gap:6px;margin-top:2px}',
       '.dsh-cot-peek-settings__radio{display:flex;align-items:center;gap:8px;cursor:pointer}',
       '.dsh-cot-peek-settings__fields{display:flex;flex-direction:column;gap:8px}',
       '.dsh-cot-peek-settings__field{display:flex;flex-direction:column;gap:4px}',
-      '.dsh-cot-peek-settings__label{font-size:12px;opacity:.75}',
-      '.dsh-cot-peek-settings__note{font-size:11px;line-height:1.5;opacity:.6}',
+      '.dsh-cot-peek-settings__label{font-size:12px;opacity:.85}',
+      '.dsh-cot-peek-settings__note{font-size:11px;line-height:1.5;opacity:.8}',
       '.dsh-cot-peek-settings__actions{display:flex;align-items:center;gap:8px;margin-top:4px}',
       '.dsh-cot-peek-settings__button{border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-brand-primary);color:#fff;border-radius:8px;font:inherit;font-size:12px;padding:5px 12px;cursor:pointer}',
       '.dsh-cot-peek-settings__button--ghost{background:transparent;color:var(--dsw-alias-label-primary)}',
-      '.dsh-cot-peek-settings__status{font-size:11px;opacity:.7}',
+      '.dsh-cot-peek-settings__status{font-size:11px;opacity:.85}',
       '.dsh-cot-peek-settings__probe{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
       '.dsh-cot-peek-settings__button[disabled]{opacity:.55;cursor:default}',
     ].join('');
@@ -2341,6 +2407,7 @@ window.__ModuleLoader__.load({
       const [rate, setRate] = React.useState(readSmoothRate);
       const [accumulate, setAccumulate] = React.useState(readAccumulate);
       const [busy, setBusy] = React.useState(false);
+      const [modelMenuOpen, setModelMenuOpen] = React.useState(false);
 
       const refresh = () => {
         if (service !== undefined && service !== null && typeof service.refresh === 'function') {
@@ -2515,25 +2582,16 @@ window.__ModuleLoader__.load({
                 h('datalist', { id: 'dsh-cot-peek-models' }, models.map((id) => h('option', { key: id, value: id }))),
               ),
               models.length > 0
-                ? h(
-                    'label',
-                    { className: 'dsh-cot-peek-settings__field' },
-                    h('span', { className: 'dsh-cot-peek-settings__label' }, t('oaModelPick')),
-                    h(
-                      'select',
-                      {
-                        className: 'dsh-cot-peek__input dsh-cot-peek__select',
-                        value: models.includes(draft.model) ? draft.model : '',
-                        onChange: (event) => {
-                          if (event.target.value === '') return;
-                          pickModel(event.target.value);
-                        },
-                      },
-                      [
-                        h('option', { key: '__pick__', value: '' }, t('oaModelPick')),
-                        ...models.map((id) => h('option', { key: id, value: id }, id)),
-                      ],
-                    ),
+                ? modelPickerNode(
+                    t,
+                    models,
+                    draft.model,
+                    modelMenuOpen,
+                    () => setModelMenuOpen(!modelMenuOpen),
+                    (id) => {
+                      pickModel(id);
+                      setModelMenuOpen(false);
+                    },
                   )
                 : null,
               field(t('oaKeyLabel'), {
@@ -2582,26 +2640,10 @@ window.__ModuleLoader__.load({
             },
           }),
           h('span', { className: 'dsh-cot-peek-settings__label' }, t('smooth')),
-          h(
-            'select',
-            {
-              className: 'dsh-cot-peek__input dsh-cot-peek__select',
-              value: rate,
-              disabled: !smooth,
-              onChange: (event) => {
-                const next = Number(event.target.value);
-                setRate(next);
-                writeSmoothRate(next);
-              },
-            },
-            SMOOTH_RATES.map((value) =>
-              h(
-                'option',
-                { key: value, value },
-                t(smoothRateLabel(value)),
-              ),
-            ),
-          ),
+          rateButtonsNode(t, rate, smooth, (value) => {
+            setRate(value);
+            writeSmoothRate(value);
+          }),
         ),
         h(
           'div',
