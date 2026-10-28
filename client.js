@@ -54,6 +54,7 @@ window.__ModuleLoader__.load({
       testConnection: 'Test connection',
       modelsFound: 'Models found:',
       modelsEmpty: 'Endpoint returned no models',
+      oaModelPick: 'Pick a model from the fetched list',
       probeOk: 'Connected · sample translation: ',
       probeFailed: 'Failed: ',
       needModel: 'This endpoint requires a model name — press "Fetch models" and pick one',
@@ -115,6 +116,7 @@ window.__ModuleLoader__.load({
       testConnection: '测试连接',
       modelsFound: '找到模型：',
       modelsEmpty: '端点没有返回模型',
+      oaModelPick: '从拉取的列表里选模型',
       probeOk: '连接成功 · 试翻：',
       probeFailed: '失败：',
       needModel: '这个端点必须填模型名 —— 点「拉取模型列表」选一个',
@@ -1070,14 +1072,23 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Height to restore when the ⚙ panel closes. Returns null when nothing
-     * should change: the panel never grew the window, or the user resized it
-     * while the panel was open.
+     * Rect to restore when the ⚙ panel closes. Returns null when nothing should
+     * change: the panel never grew the window, or the user resized it while the
+     * panel was open. A window the user dragged keeps its new position; one that
+     * only moved because growing it near the bottom pushed it up goes back.
      */
-    function settingsRestoreHeight(current, saved) {
+    function settingsRestoreRect(current, saved) {
       if (saved === null || saved === undefined || saved.grownTo === null) return null;
       if (current.h !== saved.grownTo) return null;
-      return saved.rect.h;
+      const grown = saved.grownRect;
+      const unmoved =
+        grown !== null && grown !== undefined && current.x === grown.x && current.y === grown.y;
+      return {
+        x: unmoved ? saved.rect.x : current.x,
+        y: unmoved ? saved.rect.y : current.y,
+        w: current.w,
+        h: saved.rect.h,
+      };
     }
 
     function readCollapsed() {
@@ -1087,6 +1098,7 @@ window.__ModuleLoader__.load({
         return false;
       }
     }
+
     function writeCollapsed(value) {
       try {
         window.localStorage.setItem(COLLAPSE_KEY, value ? '1' : '0');
@@ -1761,9 +1773,9 @@ window.__ModuleLoader__.load({
         setSettingsOpen(false);
         const saved = settingsRestore.current;
         settingsRestore.current = null;
-        const height = settingsRestoreHeight(rectRef.current, saved);
-        if (height === null) return;
-        const next = normalizeRect({ ...rectRef.current, h: height }, boundsRef.current);
+        const target = settingsRestoreRect(rectRef.current, saved);
+        if (target === null) return;
+        const next = normalizeRect(target, boundsRef.current);
         desired.current = { ...desired.current, ...next };
         setRect(next);
         saveRect(desired.current);
@@ -1777,11 +1789,13 @@ window.__ModuleLoader__.load({
         setOaDraft(readOA() ?? { baseUrl: '', model: '', apiKey: '' });
         const current = rectRef.current;
         const needed = settingsPanelHeight(window.innerHeight);
-        settingsRestore.current = { rect: { ...current }, grownTo: null };
+        settingsRestore.current = { rect: { ...current }, grownTo: null, grownRect: null };
         if (current.h < needed) {
-          settingsRestore.current.grownTo = needed;
-          desired.current = { ...desired.current, h: needed };
-          setRect(normalizeRect(desired.current, boundsRef.current));
+          const grown = normalizeRect({ ...desired.current, h: needed }, boundsRef.current);
+          settingsRestore.current.grownTo = grown.h;
+          settingsRestore.current.grownRect = grown;
+          desired.current = { ...desired.current, ...grown };
+          setRect(grown);
           saveRect(desired.current);
         }
         setSettingsOpen(true);
@@ -1847,6 +1861,19 @@ window.__ModuleLoader__.load({
           setOaProbe(needsModel ? t('needModel') : t('probeFailed') + message);
         } finally {
           setOaBusy(false);
+        }
+      };
+
+      // Pick from the fetched list. The datalist above filters by whatever is
+      // already typed, so a saved model id left people with a one-row dropdown;
+      // this select always shows every fetched model.
+      const pickWindowModel = (model) => {
+        const next = { ...oaDraft, model };
+        setOaDraft(next);
+        const baseUrl = next.baseUrl.trim();
+        if (baseUrl !== '') {
+          writeOA({ baseUrl, model: next.model.trim(), apiKey: next.apiKey.trim() });
+          service.refresh();
         }
       };
 
@@ -2042,6 +2069,24 @@ window.__ModuleLoader__.load({
                 onChange: (event) => setOaDraft({ ...oaDraft, apiKey: event.target.value }),
               }),
             ),
+            oaModels.length > 0
+              ? h(
+                  'select',
+                  {
+                    className: 'dsh-cot-peek__input dsh-cot-peek__select',
+                    'aria-label': t('oaModelPick'),
+                    value: oaModels.includes(oaDraft.model) ? oaDraft.model : '',
+                    onChange: (event) => {
+                      if (event.target.value === '') return;
+                      pickWindowModel(event.target.value);
+                    },
+                  },
+                  [
+                    h('option', { key: '__pick__', value: '' }, t('oaModelPick')),
+                    ...oaModels.map((id) => h('option', { key: id, value: id }, id)),
+                  ],
+                )
+              : null,
             h('datalist', { id: 'dsh-cot-peek-window-models' }, oaModels.map((id) => h('option', { key: id, value: id }))),
             h(
               'div',
@@ -2393,6 +2438,19 @@ window.__ModuleLoader__.load({
         }
       };
 
+      // Same reason as the window panel: the datalist filters by the current
+      // value, so the fetched models get their own browsable select.
+      const pickModel = (model) => {
+        const next = { ...draft, model };
+        setDraft(next);
+        const baseUrl = next.baseUrl.trim();
+        if (engine === 'custom' && baseUrl !== '') {
+          writeOA({ baseUrl, model: next.model.trim(), apiKey: next.apiKey.trim() });
+          setStatus(t('oaSaved'));
+          refresh();
+        }
+      };
+
       const field = (label, inputProps) =>
         h(
           'label',
@@ -2456,6 +2514,28 @@ window.__ModuleLoader__.load({
                 }),
                 h('datalist', { id: 'dsh-cot-peek-models' }, models.map((id) => h('option', { key: id, value: id }))),
               ),
+              models.length > 0
+                ? h(
+                    'label',
+                    { className: 'dsh-cot-peek-settings__field' },
+                    h('span', { className: 'dsh-cot-peek-settings__label' }, t('oaModelPick')),
+                    h(
+                      'select',
+                      {
+                        className: 'dsh-cot-peek__input dsh-cot-peek__select',
+                        value: models.includes(draft.model) ? draft.model : '',
+                        onChange: (event) => {
+                          if (event.target.value === '') return;
+                          pickModel(event.target.value);
+                        },
+                      },
+                      [
+                        h('option', { key: '__pick__', value: '' }, t('oaModelPick')),
+                        ...models.map((id) => h('option', { key: id, value: id }, id)),
+                      ],
+                    ),
+                  )
+                : null,
               field(t('oaKeyLabel'), {
                 type: 'password',
                 value: draft.apiKey,
