@@ -1063,6 +1063,23 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // Opening the in-window ⚙ panel grows a short window so the panel fits;
+    // remember the previous height and put it back when the panel closes.
+    function settingsPanelHeight(viewportHeight) {
+      return Math.min(460, Math.max(360, viewportHeight - 80));
+    }
+
+    /**
+     * Height to restore when the ⚙ panel closes. Returns null when nothing
+     * should change: the panel never grew the window, or the user resized it
+     * while the panel was open.
+     */
+    function settingsRestoreHeight(current, saved) {
+      if (saved === null || saved === undefined || saved.grownTo === null) return null;
+      if (current.h !== saved.grownTo) return null;
+      return saved.rect.h;
+    }
+
     function readCollapsed() {
       try {
         return window.localStorage.getItem(COLLAPSE_KEY) === '1';
@@ -1070,7 +1087,6 @@ window.__ModuleLoader__.load({
         return false;
       }
     }
-
     function writeCollapsed(value) {
       try {
         window.localStorage.setItem(COLLAPSE_KEY, value ? '1' : '0');
@@ -1286,6 +1302,10 @@ window.__ModuleLoader__.load({
       collapsedRef.current = collapsed;
       const hideTimer = React.useRef(null);
       const hoverRef = React.useRef(false);
+      // Rect before the ⚙ panel grew the window; used to put the size back.
+      const settingsRestore = React.useRef(null);
+      const settingsOpenRef = React.useRef(settingsOpen);
+      settingsOpenRef.current = settingsOpen;
 
       // Keep the interval's view of the world fresh without restarting it on
       // every streamed token.
@@ -1361,8 +1381,9 @@ window.__ModuleLoader__.load({
         if (!wasRunning.current) return undefined;
         wasRunning.current = false;
         const id = window.setTimeout(() => {
-          // Don't yank the window away while the pointer is still on it.
-          if (!hoverRef.current) collapseToEdge(true);
+          // Don't yank the window away while the pointer is still on it, or
+          // while the settings panel is open.
+          if (!hoverRef.current && !settingsOpenRef.current) collapseToEdge(true);
         }, AUTO_COLLAPSE_MS);
         return () => window.clearTimeout(id);
       }, [running]);
@@ -1733,37 +1754,51 @@ window.__ModuleLoader__.load({
         else collapseToEdge(false);
       };
 
+      // The panel needs ~420px; a window the user shrank would otherwise render
+      // the lower controls outside its background. Remember the old height so
+      // closing the panel puts the window back how it was.
+      const closeSettings = () => {
+        setSettingsOpen(false);
+        const saved = settingsRestore.current;
+        settingsRestore.current = null;
+        const height = settingsRestoreHeight(rectRef.current, saved);
+        if (height === null) return;
+        const next = normalizeRect({ ...rectRef.current, h: height }, boundsRef.current);
+        desired.current = { ...desired.current, ...next };
+        setRect(next);
+        saveRect(desired.current);
+      };
+
       const openSettings = () => {
+        if (settingsOpen) {
+          closeSettings();
+          return;
+        }
         setOaDraft(readOA() ?? { baseUrl: '', model: '', apiKey: '' });
-        setSettingsOpen((previous) => {
-          const next = !previous;
-          if (next) {
-            // The panel needs ~420px; a window the user shrank would otherwise
-            // render the lower controls outside its background.
-            const current = rectRef.current;
-            const needed = Math.min(460, Math.max(360, window.innerHeight - 80));
-            if (current.h < needed) {
-              desired.current = { ...desired.current, h: needed };
-              setRect(normalizeRect(desired.current, boundsRef.current));
-              saveRect(desired.current);
-            }
-          }
-          return next;
-        });
+        const current = rectRef.current;
+        const needed = settingsPanelHeight(window.innerHeight);
+        settingsRestore.current = { rect: { ...current }, grownTo: null };
+        if (current.h < needed) {
+          settingsRestore.current.grownTo = needed;
+          desired.current = { ...desired.current, h: needed };
+          setRect(normalizeRect(desired.current, boundsRef.current));
+          saveRect(desired.current);
+        }
+        setSettingsOpen(true);
       };
 
       const saveEndpoint = () => {
         const baseUrl = oaDraft.baseUrl.trim();
         if (baseUrl === '') writeOA(null);
         else writeOA({ baseUrl, model: oaDraft.model.trim(), apiKey: oaDraft.apiKey.trim() });
-        setSettingsOpen(false);
+        closeSettings();
         service.refresh();
       };
 
       const clearEndpoint = () => {
         writeOA(null);
         setOaDraft({ baseUrl: '', model: '', apiKey: '' });
-        setSettingsOpen(false);
+        closeSettings();
         service.refresh();
       };
 
