@@ -1125,13 +1125,42 @@ window.__ModuleLoader__.load({
       };
     }
 
+    // Inline presentation for the model listbox: a plain <select size> keeps
+    // the choices in the page (no native popup to theme) and the explicit
+    // colours do not depend on the surrounding CSS rules landing.
+    const MODEL_BOX_STYLE = {
+      display: 'block',
+      width: '100%',
+      boxSizing: 'border-box',
+      margin: 0,
+      padding: '4px',
+      border: '1px solid var(--dsw-alias-border-l2, #2c3a5a)',
+      borderRadius: '8px',
+      background: 'var(--dsw-alias-bg-base, #14161c)',
+      color: 'var(--dsw-alias-label-primary, #e8ecf4)',
+      fontFamily: 'inherit',
+      fontSize: '12px',
+      lineHeight: '1.6',
+      outline: 'none',
+      overflowY: 'auto',
+    };
+
+    const MODEL_OPTION_STYLE = {
+      background: 'var(--dsw-alias-bg-base, #14161c)',
+      color: 'var(--dsw-alias-label-primary, #e8ecf4)',
+      fontFamily: 'inherit',
+      fontSize: '12px',
+    };
+
     /**
      * Browsable model list used by both settings surfaces. A native <select>
-     * popup ignored our theme (light-grey text on a light-grey list), so the
-     * fetched models are rendered as ordinary buttons that follow the tokens.
+     * popup ignored our theme (light-grey text on a light-grey list) and a
+     * hand-drawn button list came out blank on one machine, so the fetched
+     * models live in an in-page listbox that renders with explicit colours.
      */
     function modelPickerNode(t, models, current, open, onToggle, onPick) {
-      if (models.length === 0) return null;
+      const ids = models.filter((id) => typeof id === 'string' && id !== '');
+      if (ids.length === 0) return null;
       return h(
         'div',
         { className: 'dsh-cot-peek__picker' },
@@ -1143,26 +1172,23 @@ window.__ModuleLoader__.load({
             'aria-expanded': open ? 'true' : 'false',
             onClick: onToggle,
           },
-          (current !== '' ? current : t('oaModelPick')) + ' · ' + models.length + ' ▾',
+          (current !== '' ? current : t('oaModelPick')) + ' · ' + ids.length + ' ▾',
         ),
         open
           ? h(
-              'div',
-              { className: 'dsh-cot-peek__modelList', role: 'listbox', 'aria-label': t('oaModelPick') },
-              models.map((id) =>
-                h(
-                  'button',
-                  {
-                    key: id,
-                    type: 'button',
-                    className: 'dsh-cot-peek__modelItem',
-                    role: 'option',
-                    'aria-selected': current === id ? 'true' : 'false',
-                    'data-selected': current === id ? 'true' : undefined,
-                    onClick: () => onPick(id),
-                  },
-                  id,
-                ),
+              'select',
+              {
+                className: 'dsh-cot-peek__modelBox',
+                size: Math.min(10, ids.length),
+                value: ids.includes(current) ? current : '',
+                style: MODEL_BOX_STYLE,
+                'aria-label': t('oaModelPick'),
+                onChange: (event) => {
+                  if (event.target.value !== '') onPick(event.target.value);
+                },
+              },
+              ids.map((id) =>
+                h('option', { key: id, value: id, style: MODEL_OPTION_STYLE }, id),
               ),
             )
           : null,
@@ -1970,7 +1996,7 @@ window.__ModuleLoader__.load({
         }
       };
 
-      // Pick from the fetched list. The datalist above filters by whatever is
+      // Pick from the fetched list. The old candidate input filtered by whatever is
       // already typed, so a saved model id left people with a one-row dropdown;
       // this select always shows every fetched model.
       const pickWindowModel = (model) => {
@@ -2162,7 +2188,6 @@ window.__ModuleLoader__.load({
                 type: 'text',
                 spellCheck: false,
                 placeholder: t('oaModel'),
-                list: 'dsh-cot-peek-window-models',
                 value: oaDraft.model,
                 onChange: (event) => setOaDraft({ ...oaDraft, model: event.target.value }),
               }),
@@ -2188,7 +2213,6 @@ window.__ModuleLoader__.load({
                   },
                 )
               : null,
-            h('datalist', { id: 'dsh-cot-peek-window-models' }, oaModels.map((id) => h('option', { key: id, value: id }))),
             h(
               'div',
               { className: 'dsh-cot-peek__settings-row' },
@@ -2389,12 +2413,7 @@ window.__ModuleLoader__.load({
       '.dsh-cot-peek__modelToggle{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:6px 8px;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dsh-cot-peek__modelToggle:hover,.dsh-cot-peek__modelToggle:focus-visible{border-color:var(--dsw-alias-brand-primary)}',
       '.dsh-cot-peek__modelToggle:focus-visible{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
-      '.dsh-cot-peek__modelList{display:flex;flex-direction:column;gap:2px;max-height:156px;overflow-y:auto;border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-overlay));padding:4px}',
-      '.dsh-cot-peek__modelList::-webkit-scrollbar{width:6px}',
-      '.dsh-cot-peek__modelList::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l2);border-radius:3px}',
-      '.dsh-cot-peek__modelItem{display:block;width:100%;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11.5px;line-height:1.5;padding:4px 6px;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.dsh-cot-peek__modelItem:hover,.dsh-cot-peek__modelItem:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.16));outline:none}',
-      '.dsh-cot-peek__modelItem[data-selected="true"]{color:var(--dsw-alias-brand-primary)}',
+      '.dsh-cot-peek__modelBox{display:block;width:100%;max-height:238px}',
       '.dsh-cot-peek__seg{display:flex;gap:2px;margin-left:auto}',
       '.dsh-cot-peek__segBtn{border:.5px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:18px;padding:2px 10px;border-radius:6px;cursor:pointer}',
       '.dsh-cot-peek__segBtn:hover,.dsh-cot-peek__segBtn:focus-visible{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary)}',
@@ -2546,7 +2565,7 @@ window.__ModuleLoader__.load({
         }
       };
 
-      // Same reason as the window panel: the datalist filters by the current
+      // Same reason as the window panel: the old candidate list filtered by the current
       // value, so the fetched models get their own browsable select.
       const pickModel = (model) => {
         const next = { ...draft, model };
@@ -2615,12 +2634,10 @@ window.__ModuleLoader__.load({
                 h('input', {
                   className: 'dsh-cot-peek__input',
                   spellCheck: false,
-                  list: 'dsh-cot-peek-models',
                   placeholder: 'qwen2.5-7b-instruct',
                   value: draft.model,
                   onChange: (event) => setDraft({ ...draft, model: event.target.value }),
                 }),
-                h('datalist', { id: 'dsh-cot-peek-models' }, models.map((id) => h('option', { key: id, value: id }))),
               ),
               models.length > 0
                 ? modelPickerNode(
