@@ -1024,6 +1024,40 @@ window.__ModuleLoader__.load({
       return { left, right };
     }
 
+    // A sidebar on that side means the conversation column does not touch the
+    // window edge; the peek has to dock to the column edge instead so it never
+    // covers the sidebar.
+    function sidebarOnLeft(bounds) {
+      return (
+        bounds !== null && bounds !== undefined && Number.isFinite(bounds.left) && Math.round(bounds.left) > 16
+      );
+    }
+
+    function sidebarOnRight(bounds) {
+      return (
+        bounds !== null &&
+        bounds !== undefined &&
+        Number.isFinite(bounds.right) &&
+        Math.round(bounds.right) < window.innerWidth - 16
+      );
+    }
+
+    /** Horizontal position of a docked window: column edge, else screen edge. */
+    function dockLeft(side, bounds, width) {
+      const area = horizontalArea(bounds);
+      if (side === 'left') return sidebarOnLeft(bounds) ? area.left : 0;
+      return sidebarOnRight(bounds)
+        ? Math.max(area.left, area.right - width)
+        : Math.max(0, window.innerWidth - width);
+    }
+
+    /** True when the docked edge is the conversation column, not the screen. */
+    function dockedToColumn(side, bounds) {
+      if (side === 'left') return sidebarOnLeft(bounds);
+      if (side === 'right') return sidebarOnRight(bounds);
+      return false;
+    }
+
     function normalizeRect(rect, bounds) {
       const viewportHeight = window.innerHeight;
       const area = horizontalArea(bounds);
@@ -1399,10 +1433,10 @@ window.__ModuleLoader__.load({
       }
 
       function nearestDock(targetRect) {
-        const viewportWidth = window.innerWidth;
-        if (targetRect.x <= SNAP_DISTANCE) return 'left';
-        if (targetRect.x + targetRect.w >= viewportWidth - SNAP_DISTANCE) return 'right';
-        return targetRect.x + targetRect.w / 2 >= viewportWidth / 2 ? 'right' : 'left';
+        const area = horizontalArea(boundsRef.current);
+        if (targetRect.x <= area.left + SNAP_DISTANCE) return 'left';
+        if (targetRect.x + targetRect.w >= area.right - SNAP_DISTANCE) return 'right';
+        return targetRect.x + targetRect.w / 2 >= (area.left + area.right) / 2 ? 'right' : 'left';
       }
 
       // Retract into the edge tab (the drawer). `automatic` collapses reopen on
@@ -1578,7 +1612,7 @@ window.__ModuleLoader__.load({
         const side = dockedRef.current;
         const current = rectRef.current;
         const startX =
-          side === 'left' ? 0 : side === 'right' ? Math.max(0, window.innerWidth - current.w) : current.x;
+          side === null ? current.x : dockLeft(side, boundsRef.current, current.w);
         desired.current = { ...desired.current, x: startX, y: current.y, w: current.w, h: current.h };
         if (side !== null) {
           setDocked(null);
@@ -1603,10 +1637,13 @@ window.__ModuleLoader__.load({
         if (session === null || session.pointerId !== event.pointerId) return;
         const width = session.width;
         const top = minimumTop();
+        // Stay inside the conversation column: dragging over the sidebar would
+        // cover it (the old clamp used the whole viewport).
+        const area = horizontalArea(boundsRef.current);
         const x = clamp(
           session.baseX + event.clientX - session.startX,
-          0,
-          Math.max(0, window.innerWidth - width),
+          area.left,
+          Math.max(area.left, area.right - width),
         );
         const y = clamp(
           session.baseY + event.clientY - session.startY,
@@ -1625,18 +1662,19 @@ window.__ModuleLoader__.load({
           event.currentTarget.releasePointerCapture(event.pointerId);
         }
         const current = desired.current;
-        const viewportWidth = window.innerWidth;
+        const bounds = boundsRef.current;
+        const area = horizontalArea(bounds);
         let side = null;
-        if (current.x <= SNAP_DISTANCE) side = 'left';
-        else if (current.x + current.w >= viewportWidth - SNAP_DISTANCE) side = 'right';
+        if (current.x <= area.left + SNAP_DISTANCE) side = 'left';
+        else if (current.x + current.w >= area.right - SNAP_DISTANCE) side = 'right';
         setDocked(side);
         writeDock(side);
         if (side === null) {
-          setRect(normalizeRect(desired.current, boundsRef.current));
+          setRect(normalizeRect(desired.current, bounds));
         } else {
           const top = minimumTop();
           setRect({
-            x: side === 'left' ? 0 : Math.max(0, viewportWidth - current.w),
+            x: dockLeft(side, bounds, current.w),
             y: clamp(current.y, top, Math.max(top, window.innerHeight - 48)),
             w: current.w,
             h: current.h,
@@ -1966,20 +2004,20 @@ window.__ModuleLoader__.load({
         }
       };
 
+      // When the docked edge is the conversation column (a sidebar owns that
+      // screen edge) the body is hidden in place instead of sliding out: sliding
+      // it left/right would drag it across the sidebar.
+      const columnEdge = dockedToColumn(docked, bounds);
       const windowStyle = (() => {
-        const viewportWidth = window.innerWidth;
         const hidden = collapsed && peek !== true;
         // The arrow tab lives OUTSIDE the window, so hiding pushes the whole
         // body past the viewport edge and leaves exactly the tab on screen.
         const park = rect.w + ARROW_GAP;
         let left = rect.x;
         let offset = 0;
-        if (docked === 'left') {
-          left = 0;
-          if (hidden) offset = -park;
-        } else if (docked === 'right') {
-          left = Math.max(0, viewportWidth - rect.w);
-          if (hidden) offset = park;
+        if (docked !== null) {
+          left = dockLeft(docked, bounds, rect.w);
+          if (hidden && !columnEdge) offset = docked === 'left' ? -park : park;
         }
         return {
           left: left + 'px',
@@ -1994,13 +2032,13 @@ window.__ModuleLoader__.load({
 
       const arrowStyle =
         docked === 'left'
-          ? { left: rect.w + ARROW_GAP + 'px' }
+          ? { left: (columnEdge ? 4 : rect.w + ARROW_GAP) + 'px' }
           : docked === 'right'
-            ? { left: -(ARROW_WIDTH + ARROW_GAP) + 'px' }
+            ? { left: (columnEdge ? rect.w - ARROW_WIDTH - 4 : -(ARROW_WIDTH + ARROW_GAP)) + 'px' }
             : undefined;
 
       const edgeArrow =
-        docked === null || !collapsed
+        docked === null || !collapsed || (columnEdge && peek === true)
           ? null
           : h(
               'button',
@@ -2250,6 +2288,7 @@ window.__ModuleLoader__.load({
           style: windowStyle,
           'data-collapsed': collapsed ? 'true' : undefined,
           'data-hidden': collapsed && peek !== true ? 'true' : undefined,
+          'data-column': columnEdge ? 'true' : undefined,
           'data-docked': docked === null ? undefined : docked,
           'data-running': running ? 'true' : undefined,
           role: 'region',
@@ -2312,6 +2351,8 @@ window.__ModuleLoader__.load({
     const CSS = [
       '.dsh-cot-peek{position:fixed;z-index:900;box-sizing:border-box;display:flex;flex-direction:column;min-width:320px;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-alias-bg-overlay);box-shadow:var(--dsw-elevation-prominent,0 12px 36px rgba(0,0,0,.28));backdrop-filter:blur(12px);color:var(--dsw-alias-label-primary);overflow:visible;pointer-events:auto;font-size:13px;line-height:1.55;-webkit-app-region:no-drag}',
       '.dsh-cot-peek[data-collapsed="true"]{min-width:0}',
+      '.dsh-cot-peek[data-column="true"][data-hidden="true"]{visibility:hidden}',
+      '.dsh-cot-peek[data-column="true"][data-hidden="true"] .dsh-cot-peek__edge{visibility:visible}',
       '.dsh-cot-peek[data-running="true"]{border-color:var(--dsw-alias-brand-primary)}',
       '.dsh-cot-peek__head{display:flex;align-items:center;gap:8px;min-height:34px;padding:5px 10px;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none}',
       '.dsh-cot-peek__head:active{cursor:grabbing}',
